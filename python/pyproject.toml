@@ -14,6 +14,7 @@ dependencies = [
     "soundfile>=0.12",
     "rich>=13.0",
     "matplotlib>=3.7",
+    "av>=12.0",
 ]
 
 [project.optional-dependencies]

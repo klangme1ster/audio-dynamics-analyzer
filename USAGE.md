@@ -14,7 +14,8 @@ pip install -e "python[dev]"
 This installs two commands, `ada-scan` and `ada-plot`, and the Python package `ada_core`.
 
 **Supported input:**
-* Formats: WAV, FLAC, AIFF, OGG and MP3 (through libsndfile).
+* Formats: WAV, FLAC, AIFF, OGG and MP3 (through libsndfile), plus M4A (AAC or ALAC) and raw AAC (through PyAV, which bundles FFmpeg; no separate install needed).
+* Lossy files are measured as decoded. AAC and MP3 encoding typically raises the true peak by up to about 1 dB compared with the master; that is real and is why streaming services ask for −1 dBTP.
 * Channels: mono or stereo.
 * Sample rates: any multiple of 100 Hz, such as 32, 44.1, 48, 88.2, 96, 176.4 or 192 kHz.
 
@@ -37,6 +38,8 @@ ada-scan PATH [PATH ...] [options]
 | `--export-json FILE` | Write a JSON report (a list of objects) |
 | `--plot DIR` | Save a dynamics plot per file into `DIR` |
 | `--plot-format png\|pdf\|svg` | Plot format (default `png`) |
+| `--plot-width PX` | Plot width in pixels (default 2160) |
+| `--plot-aspect W:H` | Plot aspect ratio (default `16:10`, giving 2160 × 1350) |
 
 **Examples**
 
@@ -54,7 +57,8 @@ ada-scan a.wav b.flac c.mp3 -j 4 --export-json report.json
 **Terminal table**
 * The PSR columns are coloured by zone: green, yellow, orange or red.
 * `TP max` is yellow above −1 dBTP and red above 0 dBTP.
-* The last column shows the zone of the 10th-percentile PSR, which describes the most compressed parts of the track.
+* `Zone (P10)` shows the zone of the 10th-percentile PSR, which describes the most compressed parts of the track.
+* `Ceil %` is the share of time whose peaks come within 0.5 dB of the track's maximum. High values point to brickwall limiting or clipping.
 * Files that can't be read appear as `error`, with the reason listed below the table. They don't stop the scan.
 
 **Exit code:** `0` on success. `1` if no audio was found, or if every file failed.
@@ -64,15 +68,17 @@ ada-scan a.wav b.flac c.mp3 -j 4 --export-json report.json
 ## `ada-plot`: single-file plots
 
 ```bash
-ada-plot track.flac other.wav -o plots --format png
+ada-plot track.flac other.wav -o plots --format png --width 2160 --aspect 16:10
 ```
 
-Each plot has four parts:
+The layout is fixed and `--width` only sets the resolution, so a 1200 px plot is a smaller copy of a 2160 px one. Each plot has six parts:
 
 * **Loudness and peak:** short-term loudness (LUFS) and the 3-second true peak (dBTP) on a shared dB axis.
-* **Peak-to-short-term ratio:** PSR over time, drawn over the labelled zone bands. Gaps are periods excluded from the statistics, such as the first 3 seconds and silence.
+* **Peak-to-short-term ratio:** PSR over time, drawn over the labelled zone bands. A dashed line marks the PSR P10 value (the level the track drops below 10 % of the time), continued through the distribution beside it. Gaps are periods excluded from the statistics, such as the first 3 seconds and silence.
 * **Distribution:** the percentage of the track's measured duration in each 1 dB PSR band.
-* **Summary:** integrated loudness, LRA, maximum true peak, PLR, and PSR minimum, 10th percentile and mean.
+* **Loudness vs. PSR:** a density map. Each cell shows how much of the track sits at that combination of short-term loudness and PSR. In a limited master the cloud slopes down as loudness rises and then flattens at a PSR floor set by the limiter. Open material keeps its PSR across loudness.
+* **Peaks relative to the ceiling:** a histogram of each 100 ms peak, measured relative to the track's maximum true peak. Limiting stacks peaks in the shaded 0.5 dB band, while dynamic material spreads them out. The panel title gives the share of time inside the band.
+* **Summary:** integrated loudness, LRA, maximum true peak, PLR, PSR minimum / 10th percentile / mean, and the share of time with peaks near the ceiling.
 
 ---
 
@@ -93,6 +99,7 @@ Fields appear in CSV and JSON. A missing value is empty in CSV and `null` in JSO
 | `max_short_term_lufs` | LUFS | Loudest 3 s window |
 | `psr_min`, `psr_mean`, `psr_p10` | dB | PSR statistics over the measured duration; `psr_p10` is the 10th percentile |
 | `psr_green_pct` … `psr_red_pct` | % | Share of the measured duration in each zone |
+| `peak_near_ceiling_pct` | % | Share of the measured duration with peaks within 0.5 dB of the max true peak |
 | `plot` | — | Plot path, if `--plot` was given |
 | `error` | — | Reason the file could not be analysed (only on failed rows) |
 

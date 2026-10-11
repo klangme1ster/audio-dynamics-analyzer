@@ -40,7 +40,7 @@ Test IDs (T3341-*, T3342-*, ADA-*) refer to §2 of `PROJECT_SPECIFICATION.md`. E
   - `finish()`: bins from sub-bins; $M$, $S$ and the 10 ms sub-grid values via `np.convolve` with a ones-window (implicit zero padding; a cumulative-sum difference loses precision in quiet passages after loud ones); $\text{TP}_{3s}$ via `scipy.ndimage.maximum_filter1d(P, size=30, origin=14, mode="constant", cval=0.0)` (window $n-29..n$; ADA-ALIGN also asserts against a brute-force reference); gating for $I$, LRA, PSR statistics per spec §3.5–3.7.
   - `np.errstate(divide="ignore")` around log10; every report field is finite or `None`.
 - [x] **1.6 Batch scanner CLI (`ada_core/scanner.py`, entry point `ada-scan`)** → ADA-MEM, ADA-PERF
-  - Recursive scan for WAV, FLAC, AIFF, OGG, MP3.
+  - Recursive scan for WAV, FLAC, AIFF, OGG, MP3 (libsndfile) and M4A / AAC (PyAV, `ada_core/decode.py`; streams frame by frame, container edit lists remove encoder priming).
   - `concurrent.futures.ProcessPoolExecutor`; each worker opens its own file and returns the `Result` (summary + 10 Hz arrays, ≈ 3 MB/h), never raw audio.
   - Flags: `-j/--jobs`, `--export-csv FILE`, `--export-json FILE`, `--plot DIR`, `--plot-format png|pdf|svg` (plots are rendered inside the worker).
   - CSV and JSON per spec §3.9; `rich` progress bar and summary table. Unreadable files are reported, not fatal.
@@ -51,7 +51,11 @@ Test IDs (T3341-*, T3342-*, ADA-*) refer to §2 of `PROJECT_SPECIFICATION.md`. E
 ## Phase 2: Python Visualizer
 - [x] **2.1 Timeline (`ada_core/visualizer.py`)** — shared time axis at $t_n$: $S$, $\text{TP}_{3s}$, PSR; PSR colored by zone; gated bins as gaps.
 - [x] **2.2 Histogram** — percentage of gated duration per 1 dB PSR bin, zone-colored.
-- [x] **2.3 `ada-plot` CLI** writing PNG/SVG per file.
+- [x] **2.3 `ada-plot` CLI** writing PNG/PDF/SVG per file.
+- [x] **2.4 Compression views & plot size** → ADA-CEIL, ADA-PLOT
+  - Loudness-vs-PSR 2D density (0.5 LU × 0.5 dB cells, share of gated duration, single-hue sequential scale).
+  - Histogram of bin peaks relative to $\text{TP}_{\max}$ (0.25 dB steps, clipped at −12 dB) with the 0.5 dB ceiling window shaded; report field `peak_near_ceiling_pct`.
+  - `--width PX` (default 2160) and `--aspect W:H` (default 16:10). Fixed 14.4 in layout; the pixel width sets the DPI, and there is no tight cropping, so output size is exact.
 
 ---
 
@@ -90,6 +94,7 @@ Test IDs (T3341-*, T3342-*, ADA-*) refer to §2 of `PROJECT_SPECIFICATION.md`. E
   - ADA-PARITY: test executable reads the shared synthesized WAVs and writes JSON; a pytest compares it with Python output.
 - [ ] **3.6 Standalone offline reader**
   - `juce::AudioFormatManager::registerBasicFormats()` → `createReaderFor(file)` (raw pointer; own it in `std::unique_ptr`) → `juce::AudioFormatReader::read` in fixed-size blocks on a `juce::Thread`, driving a separate `DynamicsEngine` instance at full CPU speed.
+  - M4A/AAC: enable `JUCE_USE_WINDOWS_MEDIA_FORMAT=1` (Windows; macOS reads it through CoreAudio); add an AAC and an ALAC file to the ADA-PARITY set.
   - Frames go to a history vector on that thread (reserve from `lengthInSamples`, capped at 6 h; growth allowed off the audio thread).
 
 ---

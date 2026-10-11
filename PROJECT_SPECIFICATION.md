@@ -56,6 +56,9 @@ Tech 3341 case 6 (5.0 channel) is out of scope (§1). ITU-R BS.2217 compliance f
 | ADA-CHUNK | Chunk invariance | 60.0437 s pink noise (not a multiple of $H$), chunk sizes 1, 5, 7.3 s, a random-size sequence (1–50 000 frames), and one block | All per-bin and per-sub-bin arrays and report fields agree to $\le 10^{-9}$ dB / LU |
 | ADA-TAIL | Final partial bin | 10.05 s file with a single full-scale inter-sample peak in the last 50 ms | Peak is included in $\text{TP}_{\max}$; bin count = 100 |
 | ADA-WARMUP | Warm-up & silence | (a) 2 s file; (b) 30 s file with 10 s digital silence in the middle | (a) PSR stats = n/a, LRA = n/a; (b) silent bins excluded from PSR stats; no ±inf/NaN in any report field |
+| ADA-CEIL | Peak density near the ceiling | (a) stereo 1 kHz −20 dBFS, 20 s; (b) −20 / −30 dBFS, 20 s each; (c) 2 s file | (a) 100 %; (b) 171 / 371 = 46.1 ±0.3 %; (c) n/a |
+| ADA-M4A | M4A / AAC decoding | (a) 10 s 16-bit noise + tone as WAV and ALAC M4A; (b) 1 kHz −23 dBFS, 20 s, AAC 256 kbit/s, mono and stereo | (a) all arrays and report fields identical (≤ 1e-9); (b) duration 20 s ±30 ms, I = −23.0 (stereo) / −26.0 (mono) ±0.1 LUFS |
+| ADA-PLOT | Plot geometry | Any result; 2160 / 1200 / 1000 px at 16:10 / 4:3 / 2:1; PDF and SVG | PNG is exactly width × width/aspect pixels; vector formats render |
 | ADA-MEM | Memory bound | 60 min stereo 48 kHz WAV, streamed from disk | `tracemalloc` peak < 64 MB **and** process RSS growth < 128 MB during analysis |
 | ADA-PERF | Throughput | Same 60 min WAV | ≥ 100× real-time on one core, including decode (benchmark marker, not run in CI by default) |
 | ADA-PARITY | Stage 1 ↔ Stage 2 | All Synth signals above plus one MP3 and one FLAC file, through the C++ engine's test executable | per-bin $M$, $S$, $\text{TP}_{3s}$, PSR within 0.01 dB; $I$ within 0.02 LU; LRA within 0.05 LU; $\text{TP}_{\max}$ within 0.01 dB |
@@ -134,8 +137,13 @@ $$\text{TP}_{3s}[n] = 20\log_{10} \max_{m=n-29}^{n} P[m], \qquad \text{PSR}[n] =
 ### 3.8 PLR (Peak-to-Loudness Ratio)
 $\text{PLR} = 20\log_{10}\text{TP}_{\max} - I$. `n/a` if $I$ is `n/a`.
 
-### 3.9 Report fields (per file)
-$I$, LRA, $\text{TP}_{\max}$ (dBTP), PLR, Max M, Max S, Min / Mean / P10 PSR (Mean = arithmetic mean of gated dB values; P10 with the §3.6 index rule), percentage of gated duration per PSR zone, duration, sample rate, channels, $L$. Undefined values are `null` in JSON and empty in CSV.
+### 3.9 Peak density near the ceiling
+Share of PSR-gated bins (§3.7) whose bin peak is within 0.5 dB of the file's maximum:
+$$100 \cdot \frac{|\{n \in \text{gated} : P[n] \ge \text{TP}_{\max,\text{lin}} \cdot 10^{-0.5/20}\}|}{|\text{gated}|}\ \%$$
+Brickwall limiting and clipping stack peaks at the ceiling and push this towards 100 %; open material stays low. `n/a` when no bin passes the gate or the file is digital silence.
+
+### 3.10 Report fields (per file)
+$I$, LRA, $\text{TP}_{\max}$ (dBTP), PLR, Max M, Max S, Min / Mean / P10 PSR (Mean = arithmetic mean of gated dB values; P10 with the §3.6 index rule), peak density near the ceiling (§3.9), percentage of gated duration per PSR zone, duration, sample rate, channels, $L$. Undefined values are `null` in JSON and empty in CSV.
 
 ---
 

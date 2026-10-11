@@ -31,7 +31,7 @@ pip install -e "python[dev]"
 ada-scan path/to/music --export-csv scan.csv --plot plots
 ```
 
-This prints a colour-coded table per track, writes a CSV report and saves one dynamics plot per file. See **[USAGE.md](USAGE.md)** for all options, the report fields and how to read the results.
+It reads WAV, FLAC, AIFF, OGG, MP3 and M4A (AAC / ALAC). This prints a colour-coded table per track, writes a CSV report and saves one dynamics plot per file. See **[USAGE.md](USAGE.md)** for all options, the report fields and how to read the results.
 
 ## What the numbers mean
 

@@ -165,3 +165,24 @@ def test_silence_is_excluded_from_psr_stats():
     # windows straddling the silence are quieter with the same peak, so PSR there is higher
     assert s["psr_min"] == pytest.approx(0.0, abs=0.1)
     assert s["psr_mean"] > s["psr_min"]
+
+
+# --- ADA-CEIL -----------------------------------------------------------------
+
+def test_peak_near_ceiling_steady_tone():
+    fs = 48000
+    r = analyze_array(signals.sine(fs, 20, -20.0), fs)
+    assert r.summary()["peak_near_ceiling_pct"] == pytest.approx(100.0)
+
+
+def test_peak_near_ceiling_two_levels():
+    fs = 48000
+    r = analyze_array(signals.tone_sequence(fs, [(20, -20.0), (20, -30.0)]), fs)
+    # gated bins 29..399 (371); loud bins 29..199 (171) have peaks at the ceiling
+    assert r.summary()["peak_near_ceiling_pct"] == pytest.approx(171 / 371 * 100, abs=0.3)
+
+
+def test_peak_near_ceiling_undefined_without_gated_bins():
+    fs = 48000
+    r = analyze_array(signals.sine(fs, 2, -20.0), fs)
+    assert r.summary()["peak_near_ceiling_pct"] is None

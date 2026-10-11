@@ -6,15 +6,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
-import soundfile as sf
 from scipy.ndimage import maximum_filter1d
 
+from .decode import open_audio
 from .kweight import KWeighting
 from .true_peak import TruePeakDetector
 
 ABSOLUTE_GATE = -70.0
 INTEGRATED_RELATIVE_GATE = -10.0
 LRA_RELATIVE_GATE = -20.0
+CEILING_WINDOW_DB = 0.5
 PSR_ZONES = (("green", 12.0, np.inf), ("yellow", 10.0, 12.0),
              ("orange", 8.0, 10.0), ("red", -np.inf, 8.0))
 
@@ -66,6 +67,7 @@ class Result:
     psr_min: float | None
     psr_mean: float | None
     psr_p10: float | None
+    peak_near_ceiling_pct: float | None
     psr_zone_percent: dict[str, float | None] = field(default_factory=dict)
 
     @property
@@ -92,6 +94,7 @@ class Result:
             "psr_min": _opt(self.psr_min),
             "psr_mean": _opt(self.psr_mean),
             "psr_p10": _opt(self.psr_p10),
+            "peak_near_ceiling_pct": _opt(self.peak_near_ceiling_pct),
             **{f"psr_{zone}_pct": _opt(pct) for zone, pct in self.psr_zone_percent.items()},
         }
 
@@ -185,6 +188,12 @@ class Analyzer:
             zones[name] = (float(np.mean((gated >= lo) & (gated < hi)) * 100.0)
                            if gated.size else None)
 
+        # share of gated bins whose peak is within CEILING_WINDOW_DB of the file's max true peak
+        near_ceiling = None
+        if gate.any() and tp_max_lin > 0:
+            threshold = tp_max_lin * 10.0 ** (-CEILING_WINDOW_DB / 20.0)
+            near_ceiling = float(np.mean(bin_peak[gate] >= threshold) * 100.0)
+
         def finite_max(a):
             a = a[np.isfinite(a)]
             return float(a.max()) if a.size else None
@@ -203,6 +212,7 @@ class Analyzer:
             psr_min=float(gated[0]) if gated.size else None,
             psr_mean=float(gated.mean()) if gated.size else None,
             psr_p10=float(gated[percentile_index(gated.size, 0.10)]) if gated.size else None,
+            peak_near_ceiling_pct=near_ceiling,
             psr_zone_percent=zones,
         )
 
@@ -235,9 +245,8 @@ class Analyzer:
 
 def analyze_file(path: str | Path, block_seconds: float = 5.0) -> Result:
     """Stream an audio file through the analyzer with bounded memory."""
-    info = sf.info(str(path))
-    analyzer = Analyzer(info.samplerate, info.channels)
-    blocksize = int(block_seconds * 10) * analyzer.bin_size
-    for block in sf.blocks(str(path), blocksize=blocksize, dtype="float32", always_2d=True):
+    info, blocks = open_audio(path, block_seconds)
+    analyzer = Analyzer(info.sample_rate, info.channels)
+    for block in blocks:
         analyzer.process(block)
     return analyzer.finish()

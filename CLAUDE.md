@@ -3,7 +3,7 @@
 `PROJECT_SPECIFICATION.md` is normative; its §2 (validation suite) defines "done". `IMPLEMENTATION_PLAN.md` gives the build order.
 
 ## Tech Stack
-* **Stage 1 (Python reference engine & scanner):** Python 3.11+, NumPy, SciPy, SoundFile, Rich, Matplotlib, Pytest.
+* **Stage 1 (Python reference engine & scanner):** Python 3.11+, NumPy, SciPy, SoundFile, PyAV (M4A/AAC), Rich, Matplotlib, Pytest.
 * **Stage 2 (Plugin & Desktop App):** C++20, JUCE 8 (pinned `8.0.x` tag), CMake 3.24+. Own DSP engine ported from Stage 1; `libebur128` only as a test oracle.
 
 ## Workflow

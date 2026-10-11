@@ -13,9 +13,10 @@ from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TimeRemainingColumn
 from rich.table import Table
 
+from .decode import AUDIO_EXTENSIONS
 from .engine import PSR_ZONES, analyze_file
+from .visualizer import add_size_arguments
 
-AUDIO_EXTENSIONS = {".wav", ".flac", ".aif", ".aiff", ".ogg", ".mp3"}
 ZONE_STYLES = {"green": "green", "yellow": "yellow", "orange": "dark_orange", "red": "red"}
 
 
@@ -30,7 +31,8 @@ def find_audio(paths: list[Path]) -> list[Path]:
     return sorted(found)
 
 
-def scan_one(path: str, plot_dir: str | None, plot_format: str) -> dict:
+def scan_one(path: str, plot_dir: str | None, plot_format: str,
+             plot_width: int = 2160, plot_aspect: float = 1.6) -> dict:
     """Worker: analyze one file, optionally plot it; returns only the summary (never audio)."""
     try:
         result = analyze_file(path)
@@ -38,7 +40,7 @@ def scan_one(path: str, plot_dir: str | None, plot_format: str) -> dict:
         if plot_dir:
             from .visualizer import plot_result
             out = Path(plot_dir) / f"{Path(path).stem}.{plot_format}"
-            plot_result(result, Path(path).name, out)
+            plot_result(result, Path(path).name, out, width_px=plot_width, aspect=plot_aspect)
             row["plot"] = str(out)
         return row
     except Exception as e:  # unreadable / unsupported files are reported, not fatal
@@ -60,7 +62,7 @@ def _num(v: float | None, style: str = "") -> str:
 def render_table(rows: list[dict], root: Path | None) -> Table:
     table = Table(title="ADA dynamics scan", header_style="bold", show_lines=False)
     table.add_column("File", overflow="fold", min_width=16)
-    for name in ("I (LUFS)", "LRA", "TP max", "PLR", "PSR min", "PSR mean", "PSR P10"):
+    for name in ("I (LUFS)", "LRA", "TP max", "PLR", "PSR min", "PSR mean", "PSR P10", "Ceil %"):
         table.add_column(name, justify="right")
     table.add_column("Zone (P10)")
     for r in rows:
@@ -71,7 +73,7 @@ def render_table(rows: list[dict], root: Path | None) -> Table:
             except ValueError:
                 pass
         if "error" in r:
-            table.add_row(name, "[red]error[/]", *[""] * 7)
+            table.add_row(name, "[red]error[/]", *[""] * 8)
             continue
         tp = r["true_peak_max_dbtp"]
         tp_style = "red" if tp is not None and tp > 0.0 else ("yellow" if tp is not None and tp > -1.0 else "")
@@ -82,6 +84,7 @@ def render_table(rows: list[dict], root: Path | None) -> Table:
             _num(r["psr_min"], _zone_style(r["psr_min"])),
             _num(r["psr_mean"], _zone_style(r["psr_mean"])),
             _num(p10, _zone_style(p10)),
+            _num(r["peak_near_ceiling_pct"]),
             f"[{ZONE_STYLES[zone]}]{zone}[/]" if zone else "[dim]n/a[/]",
         )
     return table
@@ -111,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--export-json", type=Path, metavar="FILE")
     p.add_argument("--plot", type=Path, metavar="DIR", help="write a dynamics plot per file")
     p.add_argument("--plot-format", choices=("png", "pdf", "svg"), default="png")
+    add_size_arguments(p, prefix="plot-")
     args = p.parse_args(argv)
 
     console = Console()
@@ -127,7 +131,8 @@ def main(argv: list[str] | None = None) -> int:
     with progress, ProcessPoolExecutor(max_workers=args.jobs) as pool:
         task = progress.add_task("Analyzing", total=len(files))
         futures = [pool.submit(scan_one, str(f), str(args.plot) if args.plot else None,
-                               args.plot_format) for f in files]
+                               args.plot_format, args.plot_width, args.plot_aspect)
+                   for f in files]
         for fut in as_completed(futures):
             rows.append(fut.result())
             progress.advance(task)
