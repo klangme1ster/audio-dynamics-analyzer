@@ -18,3 +18,4 @@ python/tests/fixtures/ebu/
 reports/
 *.csv
 *.png
+!docs/*.png
