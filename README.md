@@ -33,6 +33,15 @@ ada-scan path/to/music --export-csv scan.csv --plot plots
 
 It reads WAV, FLAC, AIFF, OGG, MP3 and M4A (AAC / ALAC). This prints a colour-coded table per track, writes a CSV report and saves one dynamics plot per file. See **[USAGE.md](USAGE.md)** for all options, the report fields and how to read the results.
 
+### Updating
+
+New versions can add dependencies (for example PyAV for M4A), so re-run the install after pulling:
+
+```bash
+git pull
+pip install -e "python[dev]"   # picks up new dependencies
+```
+
 ## What the numbers mean
 
 | PSR | Zone | Typical material |
