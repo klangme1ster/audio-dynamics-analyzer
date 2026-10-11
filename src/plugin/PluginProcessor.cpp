@@ -2,6 +2,8 @@
 
 #include "PluginEditor.h"
 
+#include <array>
+
 AdaAudioProcessor::AdaAudioProcessor()
     : AudioProcessor (BusesProperties()
                           .withInput ("Input", juce::AudioChannelSet::stereo(), true)
@@ -68,28 +70,33 @@ void AdaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         return;
 
     bool analyse = true;
-    handleTransport (analyse, buffer.getNumSamples());
+    const int numSamples = buffer.getNumSamples();
+    const int skip = handleTransport (analyse, numSamples);
     frozen.store (! analyse, std::memory_order_relaxed);
-    if (! analyse)
+    if (! analyse || skip >= numSamples)
         return; // display keeps the last values; the audio still passes through unchanged
 
+    // After a resume slightly before the pause point, audio that was already measured is skipped
+    std::array<const float*, ada::DynamicsEngine::maxChannels> channels {};
+    for (int ch = 0; ch < engine.channels(); ++ch)
+        channels[(size_t) ch] = buffer.getReadPointer (ch, skip);
     engine.setClipThreshold (clipThreshold->load (std::memory_order_relaxed));
-    engine.process (buffer.getArrayOfReadPointers(), buffer.getNumSamples(), fifo);
+    engine.process (channels.data(), numSamples - skip, fifo);
 }
 
 // The standalone app and hosts without a play head have no meaningful transport: always analyse.
 // Pausing and resuming at the same position continues the measurement; starting playback
 // anywhere else (e.g. back at the song start) begins a new one.
-void AdaAudioProcessor::handleTransport (bool& analyse, int numSamples) noexcept
+int AdaAudioProcessor::handleTransport (bool& analyse, int numSamples) noexcept
 {
     if (wrapperType == wrapperType_Standalone)
-        return; // JUCE's standalone wrapper reports a transport that never plays
+        return 0; // JUCE's standalone wrapper reports a transport that never plays
     auto* head = getPlayHead();
     if (head == nullptr)
-        return;
+        return 0;
     const auto pos = head->getPosition();
     if (! pos)
-        return;
+        return 0;
 
     const bool playing = pos->getIsPlaying();
     const auto hostTime = pos->getTimeInSamples();
@@ -109,6 +116,7 @@ void AdaAudioProcessor::handleTransport (bool& analyse, int numSamples) noexcept
 
     if (! playing && freezeWhenStopped->load (std::memory_order_relaxed) > 0.5f)
         analyse = false;
+    return decision.skipSamples;
 }
 
 void AdaAudioProcessor::noteRestart (RestartReason reason, std::int64_t from, std::int64_t to) noexcept

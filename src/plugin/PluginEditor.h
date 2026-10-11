@@ -56,8 +56,7 @@ private:
 
     std::uint64_t shownVersion = 0;
     std::uint32_t shownRestartCount = 0;
-    juce::String restartText; // why the current measurement started (automatic restarts only)
-    juce::Rectangle<int> statusArea;
+    juce::Label statusLabel; // why the current measurement started (automatic restarts only), with tooltip
     bool frozenShown = false, activeShown = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AdaAudioProcessorEditor)

@@ -135,6 +135,10 @@ AdaAudioProcessorEditor::AdaAudioProcessorEditor (AdaAudioProcessor& p)
         updateFromHistory();
     };
     addAndMakeVisible (resetButton);
+    statusLabel.setFont (juce::FontOptions (12.0f));
+    statusLabel.setColour (juce::Label::textColourId, theme::textMuted);
+    statusLabel.setMinimumHorizontalScale (0.8f);
+    addAndMakeVisible (statusLabel);
     // transport options only make sense inside a host
     const bool inHost = processor.wrapperType != juce::AudioProcessor::wrapperType_Standalone;
     addChildComponent (resetOnPlayToggle);
@@ -207,14 +211,30 @@ void AdaAudioProcessorEditor::timerCallback()
         shownRestartCount = restart.count;
         const double fs = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 48000.0;
         using R = AdaAudioProcessor::RestartReason;
+        const juce::String arrow (juce::CharPointer_UTF8 (" \xe2\x86\x92 "));
         if (restart.reason == R::playbackJump)
-            restartText = "New measurement: playback moved from " + theme::timeLabel ((double) restart.from / fs, true)
-                          + " to " + theme::timeLabel ((double) restart.to / fs, true);
+        {
+            const auto from = theme::timeLabel ((double) restart.from / fs, true);
+            const auto to = theme::timeLabel ((double) restart.to / fs, true);
+            statusLabel.setText ("New measurement: jump " + from + arrow + to, juce::dontSendNotification);
+            statusLabel.setTooltip ("The last automatic new measurement started because the playback position jumped:\n"
+                                    "measured audio ended at " + from + ", playback continued at " + to + ".\n"
+                                    "Resuming up to " + juce::String (ada::TransportTracker::resumeBackstepSeconds, 1)
+                                    + " s before where measuring stopped, or within "
+                                    + juce::String (ada::TransportTracker::jumpToleranceSeconds, 2)
+                                    + " s after it, continues instead.\n"
+                                    "Turn off \"New measurement when playback jumps\" to never restart automatically.");
+        }
         else if (restart.reason == R::settingsChanged)
-            restartText = "New measurement: sample rate or channel layout changed";
+        {
+            statusLabel.setText ("New measurement: settings changed", juce::dontSendNotification);
+            statusLabel.setTooltip ("The host changed the sample rate or the channel layout, so a new measurement started.");
+        }
         else
-            restartText = {};
-        repaint (statusArea);
+        {
+            statusLabel.setText ({}, juce::dontSendNotification);
+            statusLabel.setTooltip ({});
+        }
     }
 }
 
@@ -228,12 +248,6 @@ void AdaAudioProcessorEditor::paint (juce::Graphics& g)
         g.drawFittedText ("Unsupported sample rate or channel layout.\nADA needs mono or stereo at a multiple of 100 Hz.",
                           getLocalBounds().reduced (16), juce::Justification::centred, 3);
         return;
-    }
-    if (restartText.isNotEmpty())
-    {
-        g.setColour (theme::textMuted);
-        g.setFont (juce::FontOptions (12.0f));
-        g.drawText (restartText, statusArea, juce::Justification::centredLeft, true);
     }
     if (frozenShown)
     {
@@ -261,7 +275,7 @@ void AdaAudioProcessorEditor::resized()
     resetOnPlayToggle.setBounds (controls.removeFromLeft (280));
     freezeToggle.setBounds (controls.removeFromLeft (180));
     controls.removeFromLeft (8);
-    statusArea = controls.withTrimmedRight (210); // room for the "Frozen" badge
+    statusLabel.setBounds (controls.withTrimmedRight (210)); // room for the "Frozen" badge
     area.removeFromBottom (gap);
 
     auto strip = area.removeFromTop (readoutsHeight);

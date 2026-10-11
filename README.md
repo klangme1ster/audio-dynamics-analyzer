@@ -51,7 +51,7 @@ pip install -e "python[dev]"   # picks up new dependencies
 | 8–10 dB | 🟠 Heavy | Strong limiting |
 | < 8 dB | 🔴 Over-limited | Flattened transients, high distortion risk |
 
-These zones are practical guidance, not a standard.
+These zones are practical guidance, not a standard. For healthy and problematic ranges of every other value (integrated loudness targets, LRA, PLR, true peak) and the reasons behind them, see [What good values look like](USAGE.md#what-good-values-look-like).
 
 ## Building the plugin (work in progress)
 

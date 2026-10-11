@@ -106,7 +106,7 @@ Fields appear in CSV and JSON. A missing value is empty in CSV and `null` in JSO
 ### Reading the results
 
 * **PSR** describes the music moment to moment. Limiting is audible as a low PSR: below 8 dB for long stretches means the transients have been flattened.
-* **PLR** is the track-level equivalent: peak level compared with average loudness. Modern loud masters often sit at 8–11 dB, and dynamic recordings at 14 dB or more.
+* **PLR** is the track-level equivalent: peak level compared with average loudness. Loud modern masters often sit at 8–10 dB, typical modern masters at 10–14 dB, and dynamic recordings at 14 dB or more.
 * **PSR P10** is usually more informative than the minimum. It describes the most compressed 10 % of the track without being skewed by a single moment.
 * **Streaming targets:** Spotify and YouTube normalise to about −14 LUFS, and Apple Music to about −16 LUFS, typically with a −1 dBTP true-peak ceiling. A track much louder than its target is turned down on playback, so whatever was given up in PSR to make it loud buys nothing.
 
@@ -134,9 +134,42 @@ Work in progress: the live display is done, file analysis in the standalone app 
 * **PSR meter** (right): the current PSR as a bar in its zone colour. The solid line marks the lowest PSR since reset, the dashed line P10, the PSR the track stays below 10 % of the time.
 * **Zone bar** (bottom): how much of the measured time since reset fell into each PSR zone. A large red or orange share means most of the track is heavily limited.
 
+### What good values look like
+
+Only the broadcast limits (EBU R128, ATSC A/85) and Spotify's normalisation level and true-peak advice are published specifications; the other streaming figures are widely reported measurements. The remaining ranges are practical guidance, and they depend on the genre:
+* Electronic music, metal and modern pop are often deliberately dense and sit lower on PSR and PLR.
+* Jazz, acoustic and classical recordings sit higher.
+
+Compare a mix with good references in the same genre rather than chasing a single number.
+
+**Micro-dynamics: how hard the transients are limited**
+
+| Value | Healthy | Not so healthy | Why |
+|---|---|---|---|
+| **PSR** (now) | ≥ 12 dB open, 10–12 dB punchy commercial | 8–10 dB heavy limiting; < 8 dB over-limited | PSR is how far the peaks rise above the average loudness of the same 3 seconds. A limiter shaves the peaks off to raise the average, which shrinks the gap. Below about 8 dB, drum hits and attacks are flattened, distortion becomes likely, and the mix tends to sound loud but small and tiring. |
+| **PSR min** | ≥ 8 dB | < 8 dB (red zone) | The most compressed 3 seconds, usually the loudest chorus or drop. A short dip is normal there; a very low value means the climax is the most squashed part, so it hits less hard than it should. |
+| **P10** (dashed line on the meter) | ≥ 10 dB (green or yellow) | < 10 dB (orange or red) | The PSR the track stays below for 10 % of the measured time. Unlike the minimum, one extreme moment doesn't move it, so it shows whether limiting dominates large parts of the track rather than a single moment. |
+| **Zone bar** | Mostly green and yellow | More than about a third red | It shows how much of the track is affected. A few seconds in orange or red during the loudest parts is common; red over most of the bar means the whole track is limited hard. |
+
+**Macro-dynamics and loudness**
+
+| Value | Healthy | Not so healthy | Why |
+|---|---|---|---|
+| **Integrated** | Close to your delivery target: about −14 LUFS for Spotify, YouTube and Tidal; about −16 LUFS for Apple Music; −23 LUFS for EBU R128 broadcast; −24 LKFS for US broadcast (ATSC A/85) | Much louder than the target, e.g. −8 LUFS for streaming | Streaming services turn loud tracks down to their target. A −8 LUFS master plays back about 6 dB quieter, as loud as a −14 LUFS master, but it has lost its transients in the process. With normalisation on (the default on most services), being louder gains nothing. |
+| **Short-term / Momentary** | No fixed target; they follow the music | Loud sections sitting on one value with no movement | These show the loudness right now. They are useful for comparing sections, for example chorus against verse; a flat line across all sections means the arrangement's dynamics were compressed away. |
+| **LRA** | Pop, rock and EDM: about 3–8 LU; jazz, acoustic and film: 8–15 LU; classical: 10–20 LU or more | Below about 3 LU for acoustic music; above about 15–20 LU for pop or for TV and radio | LRA is the spread between quiet and loud passages (verse vs. chorus, scene vs. scene). Very low values on acoustic material point to heavy bus compression. Very high values make listeners reach for the volume control, and quiet parts get lost in a car or on headphones on the go. |
+| **PLR** | ≥ 14 dB dynamic; 10–14 dB typical modern master | 8–10 dB loud; < 8 dB crushed | PLR is the whole track's headroom between its highest peak and its average loudness. It is the track-level counterpart to PSR. |
+
+**Peaks**
+
+| Value | Healthy | Not so healthy | Why |
+|---|---|---|---|
+| **Max true peak** | ≤ −1 dBTP for streaming and broadcast (EBU R128, Spotify); ≤ −2 dBTP for masters louder than −14 LUFS (Spotify) and for US broadcast (ATSC A/85) | Above −1 dBTP; anything above 0 dBTP clips | Lossy encoding (AAC, MP3, Ogg) changes the waveform and adds overshoot, typically up to about 1 dB, and more at low bitrates. In a quick test during development, a limited master went from −0.4 to +0.7 dBTP after AAC encoding at 256 kbit/s. Without headroom, that overshoot clips in the listener's decoder or DAC. |
+| **True peak 3 s** | Same limits as above, on the loudest passages | CLIP indicator lit | This is the peak half of PSR. It also shows where in the song the peaks come close to the ceiling. |
+
 **Transport behaviour (inside a DAW).**
 * **Freeze while stopped** (default on): when you stop or pause, the values stay on screen instead of measuring the silence. A "Frozen" badge shows this state. Turn it off to meter live input while the transport is stopped.
-* **New measurement when playback jumps** (default on): pausing and continuing from the same spot keeps the measurement running, and so does cycle/loop playback. Jumping elsewhere, for example back to the song start (also while playing), begins a new measurement. The reason for the last automatic restart is shown next to the switches.
+* **New measurement when playback jumps** (default on): pausing and continuing from the same spot keeps the measurement running (also when the host resumes slightly earlier than where it processed up to, as Cubase does with ASIO-Guard; the overlap is not counted twice), and so does cycle/loop playback. Jumping elsewhere, for example back to the song start (also while playing), begins a new measurement. The reason for the last automatic restart is shown next to the switches; hover over it for details.
 * **Reset** button: start a new measurement at any time.
 
 The standalone app has no transport, so it always measures its audio input. JUCE mutes the input until you pick a device under *Options*, to avoid feedback.

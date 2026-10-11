@@ -69,7 +69,7 @@ private:
     ada::MetricsFifo fifo;
     ada::MetricsHistory metricsHistory { fifo }; // message thread: drains the FIFO, keeps 90 min
     std::atomic<bool> active { false };
-    void handleTransport (bool& analyse, int numSamples) noexcept;
+    int handleTransport (bool& analyse, int numSamples) noexcept; // returns samples to skip
     void noteRestart (RestartReason reason, std::int64_t from, std::int64_t to) noexcept;
 
     ada::TransportTracker transport;

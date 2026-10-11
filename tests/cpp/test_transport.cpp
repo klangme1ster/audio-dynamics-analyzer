@@ -130,6 +130,54 @@ TEST_CASE ("Negative positions (pre-roll, count-in) behave like any other")
     CHECK (play (t, 60 * 48000, 10));                // jump from the negative region while playing
 }
 
+TEST_CASE ("Resume slightly before the stop point (Cubase ASIO-Guard) continues and skips measured audio")
+{
+    ada::TransportTracker t;
+    play (t, 0, 1000);
+    const std::int64_t measuredEnd = 1000 * block;
+    const std::int64_t heard = measuredEnd - 24000; // processed 0.5 s ahead of what was audible
+    stopAt (t, heard);
+
+    int skipped = 0;
+    bool restarted = false;
+    for (int i = 0; i < 100; ++i)
+    {
+        const auto d = t.onBlock (true, heard + (std::int64_t) i * block, false, block, fs);
+        restarted |= d.startNewMeasurement;
+        skipped += d.skipSamples;
+        CHECK (d.skipSamples >= 0);
+        CHECK (d.skipSamples <= block);
+    }
+    CHECK_FALSE (restarted);
+    CHECK (skipped == 24000); // exactly the audio measured before the pause, nothing more
+}
+
+TEST_CASE ("Resume far before the stop point is a jump")
+{
+    ada::TransportTracker t;
+    play (t, 0, 1000);
+    stopAt (t, 1000 * block);
+    CHECK (play (t, 1000 * block - 3 * 48000, 10)); // 3 s back
+}
+
+TEST_CASE ("Resume after the stop point is a jump")
+{
+    ada::TransportTracker t;
+    play (t, 0, 1000);
+    stopAt (t, 1000 * block);
+    CHECK (play (t, 1000 * block + 24000, 10)); // 0.5 s forward
+}
+
+TEST_CASE ("A new measurement never skips audio")
+{
+    ada::TransportTracker t;
+    play (t, 0, 1000);
+    stopAt (t, 1000 * block);
+    const auto d = t.onBlock (true, 0, false, block, fs); // back to the start
+    CHECK (d.startNewMeasurement);
+    CHECK (d.skipSamples == 0);
+}
+
 TEST_CASE ("Hosts without position information continue")
 {
     ada::TransportTracker t;
