@@ -67,3 +67,7 @@ src/, tests/cpp/    C++ / JUCE plugin (Stage 2, upcoming)
 ## Standards
 
 ITU-R BS.1770-5 · EBU R 128 · EBU Tech 3341 · EBU Tech 3342
+
+## License
+
+[MIT](LICENSE). The planned plugin builds on JUCE; binaries linked against the open-source edition of JUCE are distributed under JUCE's AGPLv3 terms, while this repository's own code remains MIT.
