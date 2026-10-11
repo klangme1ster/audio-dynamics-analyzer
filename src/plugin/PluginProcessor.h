@@ -1,8 +1,9 @@
 #pragma once
 
 #include "DynamicsEngine.h"
-#include "LiveStats.h"
 #include "MetricsFifo.h"
+#include "MetricsHistory.h"
+#include "TransportTracker.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -39,11 +40,24 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     // UI thread interface
-    void requestReset() noexcept { engine.requestReset(); }
-    ada::MetricsFifo& metrics() noexcept { return fifo; }
+    void requestReset() noexcept
+    {
+        engine.requestReset();
+        noteRestart (RestartReason::button, -1, -1);
+    }
+
+    // Why the current measurement started (shown in the editor's status line)
+    enum class RestartReason : int { none, button, playbackJump, settingsChanged };
+    struct RestartInfo
+    {
+        RestartReason reason = RestartReason::none;
+        std::int64_t from = -1, to = -1; // host positions in samples (playbackJump)
+        std::uint32_t count = 0;         // increments on every restart
+    };
+    RestartInfo lastRestart() const noexcept;
+    ada::MetricsHistory& history() noexcept { return metricsHistory; }
     bool isAnalysisActive() const noexcept { return active.load(); }
     bool isFrozen() const noexcept { return frozen.load (std::memory_order_relaxed); }
-    float psrMinimum() const noexcept { return liveStats.psrMinimum(); }
     double analysisSampleRate() const noexcept { return engine.sampleRate(); }
 
     juce::AudioProcessorValueTreeState parameters;
@@ -53,12 +67,17 @@ private:
 
     ada::DynamicsEngine engine;
     ada::MetricsFifo fifo;
-    ada::LiveStatsSink liveStats { fifo };
+    ada::MetricsHistory metricsHistory { fifo }; // message thread: drains the FIFO, keeps 90 min
     std::atomic<bool> active { false };
     void handleTransport (bool& analyse, int numSamples) noexcept;
+    void noteRestart (RestartReason reason, std::int64_t from, std::int64_t to) noexcept;
 
-    bool wasPlaying = false;
-    std::int64_t lastPlayEnd = -1; // host timeline position just after the last played block
+    ada::TransportTracker transport;
+    double preparedRate = 0.0;
+    int preparedChannels = 0;
+    std::atomic<int> restartReason { 0 };
+    std::atomic<std::int64_t> restartFrom { -1 }, restartTo { -1 };
+    std::atomic<std::uint32_t> restartCount { 0 };
     std::atomic<bool> frozen { false };
     std::atomic<float>* resetOnPlay = nullptr;
     std::atomic<float>* freezeWhenStopped = nullptr;

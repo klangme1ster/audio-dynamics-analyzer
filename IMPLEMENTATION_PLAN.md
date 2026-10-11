@@ -75,9 +75,9 @@ Test IDs (T3341-*, T3342-*, ADA-*) refer to §2 of `PROJECT_SPECIFICATION.md`. E
 - [x] **3.4 Lock-free telemetry (`src/plugin/MetricsFifo.h`)**
   - SPSC FIFO on `juce::AbstractFifo` with `std::array<DynamicsMetrics, 1024>` (≈ 100 s at 10 Hz); full FIFO → drop frame, count it; never wait.
   - `DynamicsMetrics` (see `src/engine/DynamicsEngine.h`): bin index, reset epoch, M, S, per-bin 10 ms peaks of M and S, max M / max S since reset, bin peak, TP 3 s, TP max, raw PSR, I, LRA, LRA gate, clip flag.
-  - Minimal editor with numeric readouts and hover tooltips, Reset button, "reset when playback starts elsewhere" and "freeze while stopped" toggles, "< −70" display below the absolute gate (full GUI: Phase 4). The standalone build ignores the transport.
+  - Minimal editor with numeric readouts and hover tooltips, Reset button, "new measurement when playback jumps" and "freeze while stopped" toggles (jump logic in `ada::TransportTracker`, unit-tested; re-activation with unchanged settings keeps the measurement; restart reason shown), "< −70" display below the absolute gate (full GUI: Phase 4). The standalone build ignores the transport.
 - [x] **3.5 Real-time & parity tests** → ADA-RT-ALLOC, ADA-RT-RESET, ADA-PARITY, ADA-ORACLE, T3341-11, T3341-14
-  - `tests/cpp/`: 16 doctest cases, including NaN/inf input, re-prepare epochs, and reset at 48 kHz (D = 6) and 192 kHz (D = 0). ADA-RT-ALLOC replaces global `operator new`/`delete` with counting versions; a thread-local flag around `process()` turns any allocation into a failure (10 min of audio, random blocks 1–4096, resets). The MSVC debug `_CrtSetAllocHook` variant is not implemented yet.
+  - `tests/cpp/`: 32 doctest cases (engine, real-time, history store, transport tracker), including NaN/inf input, re-prepare epochs, and reset at 48 kHz (D = 6) and 192 kHz (D = 0). ADA-RT-ALLOC replaces global `operator new`/`delete` with counting versions; a thread-local flag around `process()` turns any allocation into a failure (10 min of audio, random blocks 1–4096, resets). The MSVC debug `_CrtSetAllocHook` variant is not implemented yet.
   - ADA-PARITY: `ada_cli` runs the engine on raw float32 audio and prints JSON; `python/tests/test_parity.py` compares 17 signals × 2 block modes (per-bin values, summary and PSR zone shares; NaN, +inf and −inf must match exactly) against Python (skips if `ada_cli` is not built). The MP3 and FLAC parity files follow with 3.6, when the C++ side gets its own decoder.
 - [ ] **3.6 Standalone offline reader**
   - `juce::AudioFormatManager::registerBasicFormats()` → `createReaderFor(file)` (raw pointer; own it in `std::unique_ptr`) → `juce::AudioFormatReader::read` in fixed-size blocks on a `juce::Thread`, driving a separate `DynamicsEngine` instance at full CPU speed.
@@ -87,8 +87,11 @@ Test IDs (T3341-*, T3342-*, ADA-*) refer to §2 of `PROJECT_SPECIFICATION.md`. E
 ---
 
 ## Phase 4: GUI & Polish
-- [ ] **4.1 Main layout (`src/gui/MainComponent.cpp`)** — resizable vector UI, dark theme, `juce::FileDragAndDropTarget` in Standalone.
-- [ ] **4.2 History graph (`src/gui/HistoryGraph.cpp`)** — reads the 54 000-frame ring (spec §4); wheel zoom, drag pan; PSR zone fills; `juce::Path` rendering.
-- [ ] **4.3 Readouts (`src/gui/MetricDisplays.cpp`)** — current PSR, Min PSR, PLR, $I$, $S$, Max M, $\text{TP}_{\max}$, LRA; clip indicator (default 0.0 dBTP, configurable); Reset button.
-- [ ] **4.4 PSR histogram (`src/gui/DynamicHistogram.cpp`)** — same binning as Phase 2.2.
+- [ ] **4.1 Main layout (`src/plugin/PluginEditor.cpp`)** — resizable dark-theme layout done (readouts strip, history + PSR meter, zone bar, controls; colours in `src/plugin/Theme.h`). Still open: `juce::FileDragAndDropTarget` in Standalone (with 3.6).
+- [x] **4.2 History graph (`src/plugin/HistoryGraph.cpp`)**
+  - Data: `ada::HistoryStore` (`src/engine/`, no JUCE; tests in `tests/cpp/test_history.cpp`) keeps a 54 000-frame ring plus PSR statistics since reset. `ada::MetricsHistory` (owned by the processor, message thread) drains the FIFO 30×/s, so the history keeps growing while the editor is closed.
+  - View: short-term loudness and 3 s true peak (auto-ranged dB axis) above PSR over labelled zone bands, shared m:ss axis. Wheel zoom 10 s – 90 min, drag to scroll back, double-click to follow live, hover crosshair with values. More frames than pixels → per-column min/max envelope.
+- [x] **4.3 Readouts & PSR meter (`src/plugin/PluginEditor.cpp`, `src/plugin/DynamicsViews.cpp`)** — readouts strip with hover help and clip indicator; vertical PSR meter: current value as a zone-coloured bar, solid marker for PSR min, dashed marker for P10 (0.1 dB resolution, never shown below the minimum).
+- [x] **4.4 Zone distribution bar (`src/plugin/DynamicsViews.cpp`)** — stacked bar of the measured time per PSR zone since reset, with a labelled legend and percentages (identity never by colour alone). Replaces the planned PSR histogram.
+- Developer tool `ada_view_snapshot` renders the views for a synthetic song into a PNG, for checking the GUI without a host.
 - [ ] **4.5 Delivery target presets** — user-editable defaults: Spotify −14 LUFS / −1 dBTP, Apple Music −16 LUFS / −1 dBTP, YouTube −14 LUFS / −1 dBTP. Check current platform documentation before release.

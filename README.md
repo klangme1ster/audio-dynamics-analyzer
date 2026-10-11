@@ -65,7 +65,7 @@ ctest --test-dir build -C Release        # C++ engine tests
 pytest python/tests/test_parity.py       # C++ engine vs. Python reference
 ```
 
-The first configure downloads JUCE 8. The VST3 and the standalone app end up in `build/src/plugin/AudioDynamicsAnalyzer_artefacts/Release/`. For now the plugin shows numeric readouts (hover over any of them for an explanation); the full interface and drag-and-drop file analysis are next. See [USAGE.md](USAGE.md#plugin-vst3--standalone) for how it behaves in a DAW.
+The first configure downloads JUCE 8. The VST3 and the standalone app end up in `build/src/plugin/AudioDynamicsAnalyzer_artefacts/Release/`. The plugin shows the live readouts, a scrolling PSR/loudness history, a PSR meter and the time per PSR zone (hover over anything for an explanation); drag-and-drop file analysis in the standalone app is next. See [USAGE.md](USAGE.md#plugin-vst3--standalone) for how it behaves in a DAW.
 
 ## How it measures
 

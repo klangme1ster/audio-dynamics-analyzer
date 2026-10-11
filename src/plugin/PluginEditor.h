@@ -1,12 +1,13 @@
 #pragma once
 
+#include "DynamicsViews.h"
+#include "HistoryGraph.h"
 #include "PluginProcessor.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
 #include <limits>
-#include <optional>
 
 // One numeric readout with a hover explanation.
 class Readout : public juce::Component, public juce::SettableTooltipClient
@@ -26,7 +27,7 @@ private:
     bool alarm = false;
 };
 
-// Phase 3 editor: numeric readouts with tooltips. The full GUI is Phase 4.
+// Readouts strip, scrolling history with PSR meter, zone distribution bar, controls (Phase 4).
 class AdaAudioProcessorEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -38,19 +39,25 @@ public:
 
 private:
     void timerCallback() override;
+    void updateFromHistory();
 
     enum Field { psr, psrMin, shortTerm, momentary, integrated, lra, truePeak3s, truePeakMax, plr, numFields };
 
     AdaAudioProcessor& processor;
     juce::TooltipWindow tooltipWindow { this, 400 };
     std::array<std::unique_ptr<Readout>, numFields> readouts;
+    HistoryGraph graph;
+    PsrMeter meter;
+    ZoneBar zoneBar;
     juce::TextButton resetButton { "Reset" };
-    juce::ToggleButton resetOnPlayToggle { "Reset when playback starts elsewhere" };
+    juce::ToggleButton resetOnPlayToggle { "New measurement when playback jumps" };
     juce::ToggleButton freezeToggle { "Freeze while stopped" };
     juce::AudioProcessorValueTreeState::ButtonAttachment resetOnPlayAttachment, freezeAttachment;
 
-    std::uint32_t epoch = 0;                         // epoch of the last frame received
-    std::optional<std::uint32_t> resetPendingEpoch;  // set by Reset until a newer epoch arrives
+    std::uint64_t shownVersion = 0;
+    std::uint32_t shownRestartCount = 0;
+    juce::String restartText; // why the current measurement started (automatic restarts only)
+    juce::Rectangle<int> statusArea;
     bool frozenShown = false, activeShown = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AdaAudioProcessorEditor)

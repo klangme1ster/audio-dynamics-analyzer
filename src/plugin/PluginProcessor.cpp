@@ -17,7 +17,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AdaAudioProcessor::createPar
 {
     return {
         std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "resetOnPlay", 1 },
-                                                    "Reset when playback starts at a new position", true),
+                                                    "New measurement when playback jumps", true),
         std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "freezeWhenStopped", 1 },
                                                     "Freeze while transport is stopped", true),
         std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "clipThreshold", 1 },
@@ -29,15 +29,26 @@ juce::AudioProcessorValueTreeState::ParameterLayout AdaAudioProcessor::createPar
 
 void AdaAudioProcessor::prepareToPlay (double sampleRate, int)
 {
+    setLatencySamples (0); // pass-through: metering latency does not delay the audio
     const int channels = juce::jlimit (1, ada::DynamicsEngine::maxChannels, getTotalNumInputChannels());
     const bool supported = ada::DynamicsEngine::supportsSampleRate (sampleRate);
+
+    // Hosts may deactivate and reactivate plugins around transport changes (e.g. Cubase suspending
+    // processing). With unchanged settings the running measurement simply continues.
+    if (supported && active.load() && sampleRate == preparedRate && channels == preparedChannels)
+        return;
+
+    const bool hadMeasurement = preparedRate > 0.0;
     if (supported)
+    {
         engine.prepare (sampleRate, channels);
+        preparedRate = sampleRate;
+        preparedChannels = channels;
+        if (hadMeasurement)
+            noteRestart (RestartReason::settingsChanged, -1, -1);
+    }
     active = supported;
-    fifo.clear();
-    wasPlaying = false;
-    lastPlayEnd = -1;
-    setLatencySamples (0); // pass-through: metering latency does not delay the audio
+    transport.reset();
 }
 
 void AdaAudioProcessor::releaseResources() {}
@@ -63,7 +74,7 @@ void AdaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         return; // display keeps the last values; the audio still passes through unchanged
 
     engine.setClipThreshold (clipThreshold->load (std::memory_order_relaxed));
-    engine.process (buffer.getArrayOfReadPointers(), buffer.getNumSamples(), liveStats);
+    engine.process (buffer.getArrayOfReadPointers(), buffer.getNumSamples(), fifo);
 }
 
 // The standalone app and hosts without a play head have no meaningful transport: always analyse.
@@ -81,22 +92,41 @@ void AdaAudioProcessor::handleTransport (bool& analyse, int numSamples) noexcept
         return;
 
     const bool playing = pos->getIsPlaying();
-    const auto time = pos->getTimeInSamples();
-    if (playing && ! wasPlaying)
+    const auto hostTime = pos->getTimeInSamples();
+    const auto time = hostTime ? std::optional<std::int64_t> (*hostTime) : std::nullopt;
+    const auto loop = pos->getLoopPoints();
+    const auto toStd = [] (const auto& o) { return o ? std::optional<double> (*o) : std::nullopt; };
+    const bool atLoopStart = ada::TransportTracker::isAtLoopStart (
+        pos->getIsLooping(), toStd (pos->getPpqPosition()),
+        loop ? std::optional<double> (loop->ppqStart) : std::nullopt, toStd (pos->getBpm()));
+    const auto decision = transport.onBlock (playing, time, atLoopStart, numSamples, getSampleRate());
+    if (decision.startNewMeasurement && resetOnPlay->load (std::memory_order_relaxed) > 0.5f)
     {
-        // Compare with where playback actually ended, not with the stopped cursor: many hosts
-        // jump back to the start position on stop (REAPER default, Cubase/Studio One option).
-        const auto tolerance = (std::int64_t) (0.25 * getSampleRate());
-        const bool resumedInPlace = time && lastPlayEnd >= 0 && std::abs (*time - lastPlayEnd) <= tolerance;
-        if (! resumedInPlace && resetOnPlay->load (std::memory_order_relaxed) > 0.5f)
-            engine.requestReset();
+        engine.requestReset();
+        if (! decision.firstPlayback) // the very first playback is not worth a message
+            noteRestart (RestartReason::playbackJump, decision.from, decision.to);
     }
-    if (playing)
-        lastPlayEnd = time ? *time + numSamples : -1;
-    wasPlaying = playing;
 
     if (! playing && freezeWhenStopped->load (std::memory_order_relaxed) > 0.5f)
         analyse = false;
+}
+
+void AdaAudioProcessor::noteRestart (RestartReason reason, std::int64_t from, std::int64_t to) noexcept
+{
+    restartFrom.store (from, std::memory_order_relaxed);
+    restartTo.store (to, std::memory_order_relaxed);
+    restartReason.store ((int) reason, std::memory_order_relaxed);
+    restartCount.fetch_add (1, std::memory_order_release);
+}
+
+AdaAudioProcessor::RestartInfo AdaAudioProcessor::lastRestart() const noexcept
+{
+    RestartInfo info;
+    info.count = restartCount.load (std::memory_order_acquire);
+    info.reason = (RestartReason) restartReason.load (std::memory_order_relaxed);
+    info.from = restartFrom.load (std::memory_order_relaxed);
+    info.to = restartTo.load (std::memory_order_relaxed);
+    return info;
 }
 
 juce::AudioProcessorEditor* AdaAudioProcessor::createEditor()

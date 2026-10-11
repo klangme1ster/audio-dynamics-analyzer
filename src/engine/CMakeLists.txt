@@ -1,5 +1,6 @@
 add_library(ada_engine STATIC
     DynamicsEngine.cpp
+    HistoryStore.cpp
     KWeighting.cpp
     LoudnessHistogram.cpp
     Summary.cpp)

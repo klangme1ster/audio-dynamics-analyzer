@@ -114,7 +114,7 @@ Fields appear in CSV and JSON. A missing value is empty in CSV and `null` in JSO
 
 ## Plugin (VST3 / standalone)
 
-Work in progress: the plugin currently shows numeric readouts only. Build it as described in the [README](README.md#building-the-plugin-work-in-progress), then copy `Audio Dynamics Analyzer.vst3` to `C:\Program Files\Common Files\VST3` (Windows) and insert it on a track or the master bus. It passes audio through unchanged.
+Work in progress: the live display is done, file analysis in the standalone app is next. Build it as described in the [README](README.md#building-the-plugin-work-in-progress), then copy `Audio Dynamics Analyzer.vst3` to `C:\Program Files\Common Files\VST3` (Windows) and insert it on a track or the master bus. It passes audio through unchanged.
 
 **Readouts.** Hover over any value for an explanation.
 
@@ -129,9 +129,14 @@ Work in progress: the plugin currently shows numeric readouts only. Build it as 
 | Max true peak | Highest true peak since the last reset |
 | PLR | Max true peak minus integrated loudness |
 
+**Graphs.**
+* **History** (centre): short-term loudness (blue) and the 3-second true peak (orange) on top, PSR over the coloured zone bands below, on one time axis. Scroll the mouse wheel to zoom (10 s to 90 min), drag to scroll back in time, double-click to follow live again. Hovering shows the exact values at that moment. The history keeps recording while the plugin window is closed.
+* **PSR meter** (right): the current PSR as a bar in its zone colour. The solid line marks the lowest PSR since reset, the dashed line P10, the PSR the track stays below 10 % of the time.
+* **Zone bar** (bottom): how much of the measured time since reset fell into each PSR zone. A large red or orange share means most of the track is heavily limited.
+
 **Transport behaviour (inside a DAW).**
 * **Freeze while stopped** (default on): when you stop or pause, the values stay on screen instead of measuring the silence. A "Frozen" badge shows this state. Turn it off to meter live input while the transport is stopped.
-* **Reset when playback starts elsewhere** (default on): continuing from where you paused keeps the measurement running; starting from a different position, for example back at the song start, begins a new measurement.
+* **New measurement when playback jumps** (default on): pausing and continuing from the same spot keeps the measurement running, and so does cycle/loop playback. Jumping elsewhere, for example back to the song start (also while playing), begins a new measurement. The reason for the last automatic restart is shown next to the switches.
 * **Reset** button: start a new measurement at any time.
 
 The standalone app has no transport, so it always measures its audio input. JUCE mutes the input until you pick a device under *Options*, to avoid feedback.

@@ -1,23 +1,13 @@
 #include "PluginEditor.h"
 
-#include "LiveStats.h"
+#include "Theme.h"
 
 #include <cmath>
 
 namespace
 {
-const juce::Colour background { 0xff1a1a19 }, textPrimary { 0xfff0efec }, textSecondary { 0xffc3c2b7 },
-    critical { 0xffd03b3b }, badge { 0xff383835 };
-
 constexpr float loudnessFloor = -70.0f; // BS.1770 absolute gate; anything below reads as "< -70"
-
-const juce::String minus = juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));
-const juce::String dash = juce::String (juce::CharPointer_UTF8 ("\xe2\x80\x93"));
-
-juce::String formatNumber (float v)
-{
-    return juce::String (v, 1).replace ("-", minus);
-}
+constexpr int readoutsHeight = 54, zoneBarHeight = 62, controlsHeight = 30, meterWidth = 130, gap = 8;
 } // namespace
 
 // ---------------------------------------------------------------------------------------------
@@ -39,28 +29,51 @@ void Readout::setValue (float newValue, bool newAlarm)
 
 void Readout::paint (juce::Graphics& g)
 {
-    auto area = getLocalBounds().reduced (6);
-    g.setColour (textSecondary);
-    g.setFont (juce::FontOptions (13.0f));
-    g.drawText (label + " (" + unit + ")", area.removeFromTop (18), juce::Justification::left);
+    g.setColour (theme::panel);
+    g.fillRoundedRectangle (getLocalBounds().toFloat(), 4.0f);
+    auto area = getLocalBounds().reduced (8, 5);
 
-    juce::String text = dash;
-    if (kind == Kind::loudness && (value < loudnessFloor || (std::isinf (value) && value < 0)))
-        text = "< " + minus + "70";
-    else if (std::isfinite (value))
-        text = formatNumber (value);
+    auto labelRow = area.removeFromTop (16);
+    g.setFont (juce::FontOptions (12.0f));
     if (alarm)
-        text += "  CLIP";
+    {
+        g.setColour (theme::zoneColours[3]);
+        g.drawText ("CLIP", labelRow.removeFromRight (34), juce::Justification::centredRight);
+    }
+    g.setColour (theme::textSecondary);
+    g.drawText (label, labelRow, juce::Justification::centredLeft, true);
 
-    g.setColour (alarm ? critical : textPrimary);
-    g.setFont (juce::FontOptions (28.0f));
-    g.drawText (text, area, juce::Justification::topLeft);
+    juce::String text = theme::dash();
+    bool showUnit = false;
+    if (kind == Kind::loudness && (value < loudnessFloor || (std::isinf (value) && value < 0)))
+        text = "< " + theme::minusSign() + "70";
+    else if (std::isfinite (value))
+    {
+        text = theme::number (value);
+        showUnit = true;
+    }
+    // shrink the value to fit narrow cells (unit only when there is room)
+    float size = 22.0f;
+    while (size > 13.0f && juce::GlyphArrangement::getStringWidthInt (juce::Font (juce::FontOptions (size)), text)
+                               > area.getWidth())
+        size -= 1.0f;
+    const juce::FontOptions valueFont (size);
+    const int w = juce::GlyphArrangement::getStringWidthInt (juce::Font (valueFont), text);
+    g.setColour (alarm ? theme::zoneColours[3] : theme::textPrimary);
+    g.setFont (valueFont);
+    g.drawText (text, area, juce::Justification::centredLeft);
+    if (showUnit && w + 4 + 28 <= area.getWidth())
+    {
+        g.setColour (theme::textMuted);
+        g.setFont (juce::FontOptions (11.0f));
+        g.drawText (unit, area.withTrimmedLeft (w + 4).withTrimmedTop (6), juce::Justification::centredLeft);
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
 
 AdaAudioProcessorEditor::AdaAudioProcessorEditor (AdaAudioProcessor& p)
-    : AudioProcessorEditor (&p), processor (p),
+    : AudioProcessorEditor (&p), processor (p), graph (p.history().store()),
       resetOnPlayAttachment (p.parameters, "resetOnPlay", resetOnPlayToggle),
       freezeAttachment (p.parameters, "freezeWhenStopped", freezeToggle)
 {
@@ -98,24 +111,28 @@ AdaAudioProcessorEditor::AdaAudioProcessorEditor (AdaAudioProcessor& p)
         "The headroom of the whole track. Loud modern masters: about 8-11 dB; dynamic recordings: 14 dB or more.");
     for (auto& r : readouts)
         addAndMakeVisible (*r);
+    addAndMakeVisible (graph);
+    addAndMakeVisible (meter);
+    addAndMakeVisible (zoneBar);
 
-    resetButton.setTooltip ("Start a new measurement now (clears integrated loudness, LRA, peaks and PSR min).");
+    resetButton.setTooltip ("Start a new measurement now (clears the history, integrated loudness, LRA, peaks and PSR statistics).");
     resetOnPlayToggle.setTooltip (
-        "When playback starts somewhere other than where it stopped (e.g. back at the song start),\n"
-        "begin a new measurement. Pausing and continuing at the same spot keeps the measurement running.");
+        "Begin a new measurement when the playback position jumps: playback starts somewhere other than\n"
+        "where it stopped, or you jump while playing (e.g. back to the song start).\n"
+        "Pausing and continuing at the same spot, and cycle/loop playback, keep the measurement running.\n"
+        "The reason for the last automatic restart is shown next to these switches.");
     freezeToggle.setTooltip (
         "While the transport is stopped, keep the last values on screen instead of measuring the silence.\n"
         "Turn this off to meter live input while the transport is stopped.");
     for (auto* t : { &resetOnPlayToggle, &freezeToggle })
-        t->setColour (juce::ToggleButton::textColourId, textSecondary);
+        t->setColour (juce::ToggleButton::textColourId, theme::textSecondary);
 
     resetButton.onClick = [this] {
         // The engine resets at its next bin boundary, which may be much later while the transport
-        // is frozen; blank the display now and ignore frames from the old measurement.
+        // is frozen; the history clears now and ignores frames from the old measurement.
         processor.requestReset();
-        resetPendingEpoch = epoch;
-        for (auto& r : readouts)
-            r->setValue (std::numeric_limits<float>::quiet_NaN());
+        processor.history().clearForReset();
+        updateFromHistory();
     };
     addAndMakeVisible (resetButton);
     // transport options only make sense inside a host
@@ -127,12 +144,45 @@ AdaAudioProcessorEditor::AdaAudioProcessorEditor (AdaAudioProcessor& p)
 
     activeShown = processor.isAnalysisActive();
     setResizable (true, true);
-    setResizeLimits (480, 320, 1600, 1200);
-    setSize (600, 380);
+    setResizeLimits (860, 520, 2400, 1600);
+    setSize (980, 620);
+    updateFromHistory();
     startTimerHz (30);
 }
 
 AdaAudioProcessorEditor::~AdaAudioProcessorEditor() { stopTimer(); }
+
+void AdaAudioProcessorEditor::updateFromHistory()
+{
+    const auto& store = processor.history().store();
+    shownVersion = store.version();
+    const auto stats = store.psrStats();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+
+    if (store.empty())
+    {
+        for (auto& r : readouts)
+            r->setValue (nan);
+        meter.setValues ({}, {}, {});
+    }
+    else
+    {
+        const auto& f = store.latest();
+        const bool measured = ada::passesLivePsrGate (f);
+        readouts[psr]->setValue (measured ? f.psr : nan);
+        readouts[psrMin]->setValue (stats.min ? *stats.min : nan);
+        readouts[shortTerm]->setValue (f.shortTermLUFS);
+        readouts[momentary]->setValue (f.momentaryLUFS);
+        readouts[integrated]->setValue (f.integratedLUFS);
+        readouts[lra]->setValue (f.lra);
+        readouts[truePeak3s]->setValue (f.truePeak3sDBTP, f.isClipping);
+        readouts[truePeakMax]->setValue (f.truePeakMaxDBTP);
+        readouts[plr]->setValue (f.truePeakMaxDBTP - f.integratedLUFS);
+        meter.setValues (measured ? std::optional<float> (f.psr) : std::nullopt, stats.min, stats.p10);
+    }
+    zoneBar.setStats (stats);
+    graph.repaint();
+}
 
 void AdaAudioProcessorEditor::timerCallback()
 {
@@ -143,50 +193,54 @@ void AdaAudioProcessorEditor::timerCallback()
         resized();
         repaint();
     }
-
-    processor.metrics().drain ([&] (const ada::DynamicsMetrics& f) {
-        epoch = f.epoch;
-        if (resetPendingEpoch && f.epoch == *resetPendingEpoch)
-            return; // frame from before the requested reset
-        resetPendingEpoch.reset();
-
-        const float nan = std::numeric_limits<float>::quiet_NaN();
-        readouts[psr]->setValue (ada::passesLivePsrGate (f) ? f.psr : nan);
-        // PSR min is tracked on the audio thread so it survives the editor being closed
-        readouts[psrMin]->setValue (processor.psrMinimum());
-        readouts[shortTerm]->setValue (f.shortTermLUFS);
-        readouts[momentary]->setValue (f.momentaryLUFS);
-        readouts[integrated]->setValue (f.integratedLUFS);
-        readouts[lra]->setValue (f.lra);
-        readouts[truePeak3s]->setValue (f.truePeak3sDBTP, f.isClipping);
-        readouts[truePeakMax]->setValue (f.truePeakMaxDBTP);
-        readouts[plr]->setValue (f.truePeakMaxDBTP - f.integratedLUFS);
-    });
-
+    if (processor.history().store().version() != shownVersion)
+        updateFromHistory();
     if (processor.isFrozen() != frozenShown)
     {
         frozenShown = processor.isFrozen();
         repaint();
     }
+
+    const auto restart = processor.lastRestart();
+    if (restart.count != shownRestartCount)
+    {
+        shownRestartCount = restart.count;
+        const double fs = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 48000.0;
+        using R = AdaAudioProcessor::RestartReason;
+        if (restart.reason == R::playbackJump)
+            restartText = "New measurement: playback moved from " + theme::timeLabel ((double) restart.from / fs, true)
+                          + " to " + theme::timeLabel ((double) restart.to / fs, true);
+        else if (restart.reason == R::settingsChanged)
+            restartText = "New measurement: sample rate or channel layout changed";
+        else
+            restartText = {};
+        repaint (statusArea);
+    }
 }
 
 void AdaAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (background);
+    g.fillAll (theme::background);
     if (! activeShown)
     {
-        g.setColour (textSecondary);
+        g.setColour (theme::textSecondary);
         g.setFont (juce::FontOptions (15.0f));
         g.drawFittedText ("Unsupported sample rate or channel layout.\nADA needs mono or stereo at a multiple of 100 Hz.",
                           getLocalBounds().reduced (16), juce::Justification::centred, 3);
         return;
     }
+    if (restartText.isNotEmpty())
+    {
+        g.setColour (theme::textMuted);
+        g.setFont (juce::FontOptions (12.0f));
+        g.drawText (restartText, statusArea, juce::Justification::centredLeft, true);
+    }
     if (frozenShown)
     {
-        auto pill = getLocalBounds().reduced (16).removeFromTop (22).removeFromRight (190);
-        g.setColour (badge);
+        auto pill = getLocalBounds().reduced (gap).removeFromBottom (controlsHeight).removeFromRight (200).reduced (0, 4);
+        g.setColour (theme::grid);
         g.fillRoundedRectangle (pill.toFloat(), 11.0f);
-        g.setColour (textPrimary);
+        g.setColour (theme::textPrimary);
         g.setFont (juce::FontOptions (12.0f));
         g.drawText ("Frozen (transport stopped)", pill, juce::Justification::centred);
     }
@@ -194,22 +248,31 @@ void AdaAudioProcessorEditor::paint (juce::Graphics& g)
 
 void AdaAudioProcessorEditor::resized()
 {
+    for (juce::Component* c : { (juce::Component*) &graph, (juce::Component*) &meter, (juce::Component*) &zoneBar })
+        c->setVisible (activeShown);
     for (auto& r : readouts)
         r->setVisible (activeShown);
 
-    auto area = getLocalBounds().reduced (16);
-    auto bottom = area.removeFromBottom (32);
-    area.removeFromTop (26); // room for the frozen badge
-    area.removeFromBottom (8);
+    auto area = getLocalBounds().reduced (gap);
 
-    resetButton.setBounds (bottom.removeFromLeft (80));
-    bottom.removeFromLeft (12);
-    resetOnPlayToggle.setBounds (bottom.removeFromLeft (bottom.getWidth() * 3 / 5));
-    freezeToggle.setBounds (bottom);
+    auto controls = area.removeFromBottom (controlsHeight);
+    resetButton.setBounds (controls.removeFromLeft (80));
+    controls.removeFromLeft (12);
+    resetOnPlayToggle.setBounds (controls.removeFromLeft (280));
+    freezeToggle.setBounds (controls.removeFromLeft (180));
+    controls.removeFromLeft (8);
+    statusArea = controls.withTrimmedRight (210); // room for the "Frozen" badge
+    area.removeFromBottom (gap);
 
-    constexpr int columns = 3, rows = (numFields + columns - 1) / columns;
-    const int cellW = area.getWidth() / columns, cellH = area.getHeight() / rows;
+    auto strip = area.removeFromTop (readoutsHeight);
+    const int cellW = (strip.getWidth() - (numFields - 1) * 4) / numFields;
     for (int i = 0; i < numFields; ++i)
-        readouts[(size_t) i]->setBounds (area.getX() + (i % columns) * cellW, area.getY() + (i / columns) * cellH,
-                                         cellW, cellH);
+        readouts[(size_t) i]->setBounds (strip.getX() + i * (cellW + 4), strip.getY(), cellW, strip.getHeight());
+    area.removeFromTop (gap);
+
+    zoneBar.setBounds (area.removeFromBottom (zoneBarHeight));
+    area.removeFromBottom (gap);
+    meter.setBounds (area.removeFromRight (meterWidth));
+    area.removeFromRight (gap);
+    graph.setBounds (area);
 }
