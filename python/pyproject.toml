@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "psutil>=5.9"]
+cpp = ["cmake>=3.24", "ninja"]
 
 [project.scripts]
 ada-scan = "ada_core.scanner:main"

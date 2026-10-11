@@ -12,10 +12,10 @@ Find out how squashed a master is. ADA measures loudness and dynamics to **ITU-R
 
 | Stage | What | State |
 |---|---|---|
-| 1 | Python reference engine, batch scanner `ada-scan`, plotter `ada-plot` | ✅ working, 42 tests passing |
-| 2 | C++20 / JUCE 8 VST3 plugin + standalone app (drag-and-drop analysis) | 🚧 planned |
+| 1 | Python reference engine, batch scanner `ada-scan`, plotter `ada-plot` | ✅ working |
+| 2 | C++20 / JUCE 8 VST3 plugin + standalone app (drag-and-drop analysis) | 🚧 engine done and matching Python; plugin builds with a basic display; GUI and file analysis next |
 
-The Python engine is the numerical reference. The plugin will be a port of it and must match it within fixed tolerances.
+The Python engine is the numerical reference. The C++ engine is a port of it and must match it within fixed tolerances (spec test ADA-PARITY).
 
 ## Quick start
 
@@ -53,6 +53,20 @@ pip install -e "python[dev]"   # picks up new dependencies
 
 These zones are practical guidance, not a standard.
 
+## Building the plugin (work in progress)
+
+Requires a C++20 compiler (on Windows: Visual Studio Build Tools 2026 with the C++ workload) and CMake ≥ 3.24, which the `cpp` extra installs into the venv:
+
+```bash
+pip install -e "python[dev,cpp]"
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release -j
+ctest --test-dir build -C Release        # C++ engine tests
+pytest python/tests/test_parity.py       # C++ engine vs. Python reference
+```
+
+The first configure downloads JUCE 8. The VST3 and the standalone app end up in `build/src/plugin/AudioDynamicsAnalyzer_artefacts/Release/`. For now the plugin shows numeric readouts (hover over any of them for an explanation); the full interface and drag-and-drop file analysis are next. See [USAGE.md](USAGE.md#plugin-vst3--standalone) for how it behaves in a DAW.
+
 ## How it measures
 
 * **K-weighting:** BS.1770 two-stage filter, with coefficients derived for any sample rate.
@@ -69,8 +83,8 @@ The full definitions, tolerances and test matrix are in [PROJECT_SPECIFICATION.m
 ```
 python/ada_core/    engine, K-weighting, true peak, scanner, visualizer
 python/tests/       compliance and unit tests (pytest)
-python/tools/       EBU test-set installer
-src/, tests/cpp/    C++ / JUCE plugin (Stage 2, upcoming)
+python/tools/       EBU test-set installer, C++ table generator
+src/, tests/cpp/    C++ engine, JUCE plugin and tests (Stage 2, in progress)
 ```
 
 ## Standards
@@ -79,4 +93,4 @@ ITU-R BS.1770-5 · EBU R 128 · EBU Tech 3341 · EBU Tech 3342
 
 ## License
 
-[MIT](LICENSE). The planned plugin builds on JUCE; binaries linked against the open-source edition of JUCE are distributed under JUCE's AGPLv3 terms, while this repository's own code remains MIT.
+[MIT](LICENSE). The plugin builds on JUCE; binaries linked against the open-source edition of JUCE are distributed under JUCE's AGPLv3 terms, while this repository's own code remains MIT.

@@ -112,6 +112,32 @@ Fields appear in CSV and JSON. A missing value is empty in CSV and `null` in JSO
 
 ---
 
+## Plugin (VST3 / standalone)
+
+Work in progress: the plugin currently shows numeric readouts only. Build it as described in the [README](README.md#building-the-plugin-work-in-progress), then copy `Audio Dynamics Analyzer.vst3` to `C:\Program Files\Common Files\VST3` (Windows) and insert it on a track or the master bus. It passes audio through unchanged.
+
+**Readouts.** Hover over any value for an explanation.
+
+| Readout | Meaning |
+|---|---|
+| PSR | Current peak-to-short-term ratio over the last 3 s. Blank during the first 3 s and in silence or very quiet passages |
+| PSR min | Lowest PSR since the last reset |
+| Short-term / Momentary | Loudness over the last 3 s / 400 ms. Below the −70 LUFS gate they read "< −70" |
+| Integrated | Gated average loudness since the last reset |
+| LRA | Loudness range since the last reset |
+| True peak 3 s | Highest true peak in the last 3 s; shows CLIP above the clip threshold (default 0 dBTP, host-automatable parameter) |
+| Max true peak | Highest true peak since the last reset |
+| PLR | Max true peak minus integrated loudness |
+
+**Transport behaviour (inside a DAW).**
+* **Freeze while stopped** (default on): when you stop or pause, the values stay on screen instead of measuring the silence. A "Frozen" badge shows this state. Turn it off to meter live input while the transport is stopped.
+* **Reset when playback starts elsewhere** (default on): continuing from where you paused keeps the measurement running; starting from a different position, for example back at the song start, begins a new measurement.
+* **Reset** button: start a new measurement at any time.
+
+The standalone app has no transport, so it always measures its audio input. JUCE mutes the input until you pick a device under *Options*, to avoid feedback.
+
+---
+
 ## Python API
 
 ```python

@@ -31,8 +31,11 @@
 * **True peak:** BS.1770 Annex 2 48-tap filter; 4× for $f_s \le 48$ kHz, 2× (phases 0, 2) for $\le 96$ kHz, 1× above. One coefficient source for Python and C++.
 
 ## Build & Test Reference
-* Install Python package: `pip install -e "python[dev]"`
+* Install Python package (plus CMake for the C++ build): `pip install -e "python[dev,cpp]"`
+* C++ toolchain on Windows: Visual Studio Build Tools 2026 (C++ workload); CMake comes from the `cpp` extra
+* After changing K-weighting or true-peak constants in Python: `python python/tools/gen_cpp_tables.py`
 * Run Python tests: `pytest python/tests` (EBU file tests skip unless `python/tools/fetch_ebu_testset.py` was run)
 * Configure CMake: `cmake -B build -S . -DCMAKE_BUILD_TYPE=Release`
 * Build Standalone and VST3: `cmake --build build --config Release -j`
 * Run C++ engine tests: `ctest --test-dir build -C Release`
+* Python ↔ C++ parity: `pytest python/tests/test_parity.py` (needs the built `ada_cli`)

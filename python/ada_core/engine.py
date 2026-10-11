@@ -121,6 +121,8 @@ class Analyzer:
 
     def process(self, x: np.ndarray) -> None:
         x = np.asarray(x, dtype=np.float64)
+        if not np.isfinite(x).all():  # NaN/inf would poison the filter state (spec 3.4)
+            x = np.where(np.isfinite(x), x, 0.0)
         if x.ndim == 1:
             x = x[:, None]
         if x.shape[1] != self.channels:
@@ -156,8 +158,9 @@ class Analyzer:
         assert len(bin_peak) == n_bins, (len(bin_peak), n_bins)
 
         # channel weights G_i = 1.0 for mono and stereo
-        sub_power = sub.sum(axis=1)
-        bin_power = sub_power[:n_bins * 10].reshape(n_bins, 10).sum(axis=1)
+        # a trailing partial bin contributes to the max true peak only (spec 3.1)
+        sub_power = sub.sum(axis=1)[:n_bins * 10]
+        bin_power = sub_power.reshape(n_bins, 10).sum(axis=1)
 
         block_power = window_sum(bin_power, 4) / (4 * H)        # 400 ms
         st_power = window_sum(bin_power, 30) / (30 * H)         # 3 s
@@ -180,7 +183,9 @@ class Analyzer:
         if lra_gate is not None:
             gate[29:] = (short_term[29:] >= ABSOLUTE_GATE) & (short_term[29:] >= lra_gate)
         with np.errstate(invalid="ignore"):
-            psr = np.where(gate, true_peak_3s - short_term, np.nan)
+            raw_psr = true_peak_3s - short_term
+        gate &= np.isfinite(raw_psr)  # no peak in the window (filter tail only): not measured
+        psr = np.where(gate, raw_psr, np.nan)
         gated = np.sort(psr[gate])
 
         zones: dict[str, float | None] = {}
