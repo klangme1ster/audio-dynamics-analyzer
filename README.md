@@ -6,7 +6,17 @@ Find out how squashed a master is. ADA measures loudness and dynamics to **ITU-R
 * **PLR** (peak-to-loudness ratio): the dynamic headroom of the whole track.
 * **Integrated loudness** (LUFS), **loudness range** (LRA), and **true peak** (dBTP).
 
-![Dynamics profile of a heavily limited track](docs/example-profile.png)
+![The standalone app analysing a trance track: loudness and true peak over time, PSR against its zones, the PSR meter and the delivery target check](docs/screenshots/file-view.png)
+
+*The standalone app (also a VST3 plugin) after analysing an 8½-minute trance track in one second: integrated −7.5 LUFS, PSR mostly in the "heavy" and "over-limited" zones, peaks above 0 dBTP. Against Apple Music's −16 LUFS it would be turned down by 8.5 dB.*
+
+![Dynamics profile of a heavily limited track, from ada-plot](docs/example-profile.png)
+
+*The same kind of profile as a plot from the Python scanner (`ada-plot`).*
+
+## Download
+
+Ready-to-use Windows builds (VST3 plugin and standalone app, 64-bit) are on the **[Releases page](https://github.com/klangme1ster/audio-dynamics-analyzer/releases)**. Unzip, copy the `.vst3` folder to `C:\Program Files\Common Files\VST3`, or just run the `.exe`; the zip's `INSTALL.txt` has the details. The files are not code-signed, so Windows may warn on first start (*More info → Run anyway*).
 
 ## Status
 
@@ -53,7 +63,7 @@ pip install -e "python[dev]"   # picks up new dependencies
 
 These zones are practical guidance, not a standard. For healthy and problematic ranges of every other value (integrated loudness targets, LRA, PLR, true peak) and the reasons behind them, see [What good values look like](USAGE.md#what-good-values-look-like).
 
-## Building the plugin (work in progress)
+## Building the plugin
 
 Requires a C++20 compiler (on Windows: Visual Studio Build Tools 2026 with the C++ workload) and CMake ≥ 3.24, which the `cpp` extra installs into the venv:
 
@@ -66,6 +76,21 @@ pytest python/tests/test_parity.py       # C++ engine vs. Python reference
 ```
 
 The first configure downloads JUCE 8. The VST3 and the standalone app end up in `build/src/plugin/AudioDynamicsAnalyzer_artefacts/Release/`. The plugin shows the live readouts, a scrolling PSR/loudness history, a PSR meter and the time per PSR zone (hover over anything for an explanation); drop an audio file on the window (or open one) to analyse it at several hundred times real time, in the standalone app or inside the plugin. See [USAGE.md](USAGE.md#plugin-vst3--standalone) for how it behaves in a DAW.
+
+### Releases
+
+Pushing a version tag builds and publishes a release (`.github/workflows/release.yml`): GitHub builds on Windows, runs all tests, packs the VST3, the standalone app and `packaging/INSTALL.txt` into a zip and attaches it with `packaging/release-notes.md`. The tag must match the version in `CMakeLists.txt`:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+A build without a release can be started by hand under *Actions → Release → Run workflow*; the zip is then attached to the run. Binaries link the C/C++ runtime statically, so users need no Visual C++ redistributable.
+
+### Screenshots
+
+`python python/tools/capture_screenshot.py <audio file> docs/screenshots/file-view.png --size 2000x1250` opens the built standalone app with the file and captures its window (Windows). Retake the screenshots when the GUI changes visibly.
 
 ## How it measures
 

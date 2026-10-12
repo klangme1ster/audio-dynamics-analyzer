@@ -1,0 +1,94 @@
+# Builds the Windows VST3 and standalone app, runs all tests and, for a version tag (v0.1.0),
+# publishes a GitHub release with a zip. Run it by hand (Actions tab) for a test build without
+# a release; the zip is then attached to the run as an artifact.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the Python package and CMake
+        run: pip install -e "python[dev,cpp]"
+
+      - name: Check that the tag matches the CMake version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          $v = (Select-String -Path CMakeLists.txt -Pattern 'project\(AudioDynamicsAnalyzer VERSION ([0-9.]+)').Matches[0].Groups[1].Value
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match the CMake version $v" }
+
+      - name: Configure
+        run: cmake -B build -S . -A x64
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      - name: C++ tests
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Python tests
+        run: pytest python/tests -q -k "not m4a_file and not m4a_broken and not m4a_pns"
+
+      # M4A parity needs Windows' Media Foundation, which server images may not include; where it
+      # exists, the tests must pass
+      - name: Python M4A parity tests (Media Foundation)
+        run: |
+          if (Test-Path "$env:WINDIR\System32\mfplat.dll") { pytest python/tests/test_parity.py -q -k "m4a"; if ($LASTEXITCODE) { exit $LASTEXITCODE } }
+          else { Write-Output "::warning::Media Foundation is not available on this runner; M4A parity tests skipped" }
+
+      - name: Package
+        id: package
+        run: |
+          $version = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}".TrimStart("v") } else { "dev-$("${{ github.sha }}".Substring(0, 7))" }
+          $name = "AudioDynamicsAnalyzer-$version-windows-x64"
+          $artefacts = "build/src/plugin/AudioDynamicsAnalyzer_artefacts/Release"
+          $exe = "$artefacts/Standalone/Audio Dynamics Analyzer.exe"
+          $vst3 = "$artefacts/VST3/Audio Dynamics Analyzer.vst3/Contents/x86_64-win/Audio Dynamics Analyzer.vst3"
+          # the binaries must not need the Visual C++ redistributable (static runtime)
+          foreach ($binary in $exe, $vst3) {
+            foreach ($dll in "VCRUNTIME140.dll", "VCRUNTIME140_1.dll", "MSVCP140.dll") {
+              if (Select-String -LiteralPath $binary -Pattern $dll -SimpleMatch -Quiet) { throw "$binary depends on $dll" }
+            }
+          }
+          $out = "dist/$name"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item -Recurse "$artefacts/VST3/Audio Dynamics Analyzer.vst3" $out
+          Copy-Item $exe $out
+          Copy-Item packaging/INSTALL.txt, LICENSE $out
+          # the binaries are AGPLv3 (open-source JUCE): ship the license text and JUCE's terms
+          Invoke-WebRequest https://www.gnu.org/licenses/agpl-3.0.txt -OutFile "$out/LICENSE-AGPL-3.0.txt"
+          Copy-Item build/_deps/juce-src/LICENSE.md "$out/LICENSE-JUCE.md"
+          Compress-Archive -Path $out -DestinationPath "dist/$name.zip"
+          "zip=dist/$name.zip" >> $env:GITHUB_OUTPUT
+          "name=$name" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.zip }}
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Audio Dynamics Analyzer ${{ github.ref_name }}
+          body_path: packaging/release-notes.md
+          generate_release_notes: true
+          files: ${{ steps.package.outputs.zip }}

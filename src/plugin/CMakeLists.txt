@@ -38,12 +38,17 @@ target_link_libraries(AudioDynamicsAnalyzer
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
 
-# Media Foundation (M4A / AAC reader, part of Windows)
-set(ADA_MEDIA_FOUNDATION_LIBS "")
-if(WIN32)
-    set(ADA_MEDIA_FOUNDATION_LIBS mfplat mfreadwrite mfuuid)
-endif()
-target_link_libraries(AudioDynamicsAnalyzer PRIVATE ${ADA_MEDIA_FOUNDATION_LIBS})
+# Media Foundation (M4A / AAC reader, part of Windows). Delay-loaded: Windows "N" editions without
+# the Media Feature Pack (and some server images) have no mfplat.dll; the app and the plugin must
+# still start there, only without M4A (ada::mediaFoundationAvailable). PUBLIC, so the options reach
+# the VST3 / standalone targets that link JUCE's shared-code library.
+function(ada_link_media_foundation target)
+    if(MSVC)
+        target_link_libraries(${target} PUBLIC mfplat mfreadwrite mfuuid delayimp)
+        target_link_options(${target} PUBLIC /DELAYLOAD:mfplat.dll /DELAYLOAD:mfreadwrite.dll)
+    endif()
+endfunction()
+ada_link_media_foundation(AudioDynamicsAnalyzer)
 
 # Developer tool: renders the dynamics views for a synthetic song into a PNG (no host needed)
 juce_add_console_app(ada_view_snapshot PRODUCT_NAME "ada_view_snapshot")
@@ -76,9 +81,9 @@ if(ADA_BUILD_TESTS)
         ada_engine
         juce::juce_audio_formats
         juce::juce_events
-        ${ADA_MEDIA_FOUNDATION_LIBS}
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
+    ada_link_media_foundation(ada_file_analysis_tests)
     add_test(NAME ada_file_analysis_tests COMMAND ada_file_analysis_tests)
 
     # File runner for the Python parity test of decoded formats (python/tests/test_parity.py)
@@ -94,7 +99,7 @@ if(ADA_BUILD_TESTS)
         ada_engine
         juce::juce_audio_formats
         juce::juce_events
-        ${ADA_MEDIA_FOUNDATION_LIBS}
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
+    ada_link_media_foundation(ada_file_cli)
 endif()

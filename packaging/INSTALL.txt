@@ -1,0 +1,39 @@
+Audio Dynamics Analyzer (ADA) for Windows (64-bit)
+===================================================
+
+Standalone app
+--------------
+Run "Audio Dynamics Analyzer.exe". No installation needed; it can live in any folder.
+Drop an audio file on the window to analyse it, or use the Output view to measure what
+Windows plays.
+
+VST3 plugin
+-----------
+Copy the folder "Audio Dynamics Analyzer.vst3" (the whole folder) to
+
+    C:\Program Files\Common Files\VST3
+
+then rescan plugins in your DAW (in Cubase: Studio > VST Plug-in Manager). Insert it as the
+last plugin on the master bus or on any track you want to measure.
+
+Windows warning
+---------------
+The files are not code-signed. On first start Windows may show "Windows protected your PC";
+click "More info", then "Run anyway". Some DAWs show a similar note for unsigned plugins.
+
+Documentation and source
+------------------------
+https://github.com/klangme1ster/audio-dynamics-analyzer
+How to read the values: USAGE.md in the repository.
+
+License
+-------
+ADA's own code is MIT licensed (LICENSE). These binaries are built with the open-source
+edition of JUCE and are therefore distributed under the GNU AGPLv3 (LICENSE-AGPL-3.0.txt,
+JUCE's terms in LICENSE-JUCE.md); the complete source code is available at the address above.
+
+M4A / AAC files
+---------------
+Read through Windows' own decoder (Media Foundation). On Windows "N" editions install the
+Media Feature Pack (Settings > Apps > Optional features) to analyse M4A; everything else
+works without it.

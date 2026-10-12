@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <vector>
@@ -153,6 +154,38 @@ namespace
         return value;
     }
 } // namespace
+
+std::optional<juce::int64> countAdtsSamples (juce::InputStream& in, double outputRate)
+{
+    static constexpr int adtsRates[] = { 96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350 };
+    const auto total = in.getTotalLength();
+    juce::int64 pos = 0;
+
+    // ID3v2 tag: "ID3", version (2), flags (1), size (4 x 7 bits), optional 10-byte footer
+    juce::uint8 h[10] = {};
+    if (in.setPosition (0) && in.read (h, 10) == 10 && h[0] == 'I' && h[1] == 'D' && h[2] == '3')
+    {
+        const juce::int64 size = ((juce::int64) (h[6] & 0x7f) << 21) | ((h[7] & 0x7f) << 14) | ((h[8] & 0x7f) << 7) | (h[9] & 0x7f);
+        pos = 10 + size + ((h[5] & 0x10) != 0 ? 10 : 0);
+    }
+
+    juce::int64 samples = 0, frames = 0;
+    while (pos + 7 <= total && in.setPosition (pos))
+    {
+        juce::uint8 b[7] = {};
+        if (in.read (b, 7) != 7 || b[0] != 0xff || (b[1] & 0xf6) != 0xf0) // sync 0xFFF, layer 0
+            break;                                                          // e.g. an ID3v1 tag at the end
+        const int rateIndex = (b[2] >> 2) & 0x0f;
+        const int frameLength = ((b[3] & 0x03) << 11) | (b[4] << 3) | (b[5] >> 5);
+        if (rateIndex >= (int) std::size (adtsRates) || frameLength < 7 || pos + frameLength > total)
+            break; // invalid, or the last frame is cut off (not decoded)
+        const int perBlock = std::abs (outputRate - 2.0 * adtsRates[rateIndex]) < 1.0 ? 2048 : 1024; // SBR doubles the rate
+        samples += (juce::int64) ((b[6] & 0x03) + 1) * perBlock;
+        ++frames;
+        pos += frameLength;
+    }
+    return frames > 0 ? std::optional<juce::int64> (samples) : std::nullopt;
+}
 
 Mp4Timing readMp4Timing (juce::InputStream& in, double sampleRate)
 {
@@ -376,7 +409,20 @@ public:
         const auto mfLength = duration && *duration > 0 ? std::optional<juce::int64> (toFrames (*duration, sampleRate))
                                                          : std::nullopt;
         const auto limit = mfLength ? *mfLength + (juce::int64) (sampleRate / 10.0) : (juce::int64) (sampleRate * 24 * 3600);
-        if (timing.lengthSamples && *timing.lengthSamples > 0 && *timing.lengthSamples <= limit)
+        // Raw ADTS AAC has no stored length and Media Foundation's estimate can be seconds short:
+        // count the frames instead (bounded by the file itself)
+        std::optional<juce::int64> adtsLength;
+        if (! timing.lengthSamples && container.openedOk() && container.setPosition (0))
+            adtsLength = countAdtsSamples (container, sampleRate);
+        // The count is believed unless it is far from Media Foundation's estimate, which itself can
+        // be off by seconds either way (junk in the middle of a stream stops the count early; a
+        // crafted file could claim hours)
+        const bool adtsPlausible = adtsLength && *adtsLength > 0
+                                   && (! mfLength || (*adtsLength >= *mfLength / 2
+                                                      && *adtsLength <= 2 * *mfLength + (juce::int64) sampleRate));
+        if (adtsPlausible)
+            lengthInSamples = *adtsLength;
+        else if (timing.lengthSamples && *timing.lengthSamples > 0 && *timing.lengthSamples <= limit)
             lengthInSamples = *timing.lengthSamples;
         else if (mfLength)
             lengthInSamples = std::max<juce::int64> (0, *mfLength - priming);
@@ -531,12 +577,23 @@ juce::AudioFormatReader* MediaFoundationAudioFormat::createReaderFor (juce::Inpu
     return nullptr;
 }
 
+bool mediaFoundationAvailable()
+{
+#if JUCE_WINDOWS
+    // checked before the first call into a delay-loaded DLL; the modules stay loaded
+    static const bool available = LoadLibraryExW (L"mfplat.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32) != nullptr
+                                  && LoadLibraryExW (L"mfreadwrite.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32) != nullptr;
+    return available;
+#else
+    return false;
+#endif
+}
+
 void registerAudioFormats (juce::AudioFormatManager& formats)
 {
     formats.registerBasicFormats();
-#if JUCE_WINDOWS
-    formats.registerFormat (new MediaFoundationAudioFormat(), false);
-#endif
+    if (mediaFoundationAvailable())
+        formats.registerFormat (new MediaFoundationAudioFormat(), false);
 }
 
 } // namespace ada

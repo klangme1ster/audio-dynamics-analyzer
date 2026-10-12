@@ -184,14 +184,14 @@ def song(fs: int, channels: int, seconds: int = 15) -> np.ndarray:
 
 
 def analyse_both(case: str, tmp_path: Path, codec: str, sample_format: str, fs: int, channels: int,
-                 options: dict[str, str] | None = None) -> tuple:
+                 options: dict[str, str] | None = None, extension: str = ".m4a") -> tuple:
     from ada_core.engine import analyze_file
     from test_decode import write_encoded
 
     x = song(fs, channels)
     if sample_format == "s16p":
         x = np.round(np.clip(x, -1, 1) * 32767) / 32767
-    path = tmp_path / f"{case}.m4a"
+    path = tmp_path / f"{case}{extension}"
     write_encoded(path, x, fs, codec, sample_format, options)
     py = analyze_file(path)
     out = subprocess.run([str(FILE_CLI), str(path)], capture_output=True, text=True, check=True)
@@ -203,8 +203,10 @@ def analyse_both(case: str, tmp_path: Path, codec: str, sample_format: str, fs: 
     return py, cpp
 
 
-M4A_CASES = {  # name: (codec, sample format, fs, channels, encoder options)
+M4A_CASES = {  # name: (codec, sample format, fs, channels, encoder options[, file extension])
     "aac-44k-stereo": ("aac", "fltp", 44100, 2, {"aac_pns": "0"}),
+    # raw ADTS AAC: no container length; Windows' estimate can be seconds short, ADA counts frames
+    "adts-44k-stereo": ("aac", "fltp", 44100, 2, {"aac_pns": "0"}, ".aac"),
     "aac-48k-mono": ("aac", "fltp", 48000, 1, {"aac_pns": "0"}),
     "alac-48k-stereo": ("alac", "s16p", 48000, 2, None),
 }

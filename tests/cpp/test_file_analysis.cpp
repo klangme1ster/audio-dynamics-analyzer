@@ -298,9 +298,53 @@ TEST_CASE ("M4A files are offered by the file analysis on Windows")
 {
     ada::FileAnalysis analysis;
 #if JUCE_WINDOWS
+    if (! ada::mediaFoundationAvailable())
+        return; // e.g. Windows N without the Media Feature Pack: ADA runs, without M4A
     CHECK (analysis.isSupportedFile (juce::File ("song.m4a")));
     CHECK (analysis.isSupportedFile (juce::File ("song.AAC")));
     CHECK (analysis.wildcard().contains ("*.m4a"));
 #endif
     CHECK (! analysis.isSupportedFile (juce::File ("notes.txt")));
+}
+
+namespace
+{
+// One ADTS frame header (7 bytes, no CRC) plus payload: AAC LC, given rate index, stereo
+juce::MemoryBlock adtsFrame (int rateIndex, int payload, int blocks = 1)
+{
+    const int length = 7 + payload;
+    juce::uint8 h[7] = { 0xff, 0xf1, (juce::uint8) ((1 << 6) | (rateIndex << 2)), (juce::uint8) ((2 << 6) | ((length >> 11) & 0x03)),
+                         (juce::uint8) ((length >> 3) & 0xff), (juce::uint8) (((length & 0x07) << 5) | 0x1f), (juce::uint8) (0xfc | (blocks - 1)) };
+    juce::MemoryBlock frame (h, 7);
+    frame.setSize ((size_t) length, true);
+    return frame;
+}
+
+std::optional<juce::int64> adtsSamples (const juce::MemoryBlock& file, double rate)
+{
+    juce::MemoryInputStream in (file, false);
+    return ada::countAdtsSamples (in, rate);
+}
+} // namespace
+
+TEST_CASE ("Raw AAC (ADTS) length is counted from the frame headers")
+{
+    // 3 frames at 44.1 kHz (rate index 4), one of them carrying 2 raw blocks
+    const auto stream = concat ({ adtsFrame (4, 300), adtsFrame (4, 280, 2), adtsFrame (4, 310) });
+    CHECK (adtsSamples (stream, 44100.0) == std::optional<juce::int64> (4 * 1024));
+
+    // HE-AAC: the decoder runs at twice the header's rate, 2048 samples per frame
+    CHECK (adtsSamples (concat ({ adtsFrame (6, 200), adtsFrame (6, 200) }), 48000.0) == std::optional<juce::int64> (2 * 2048));
+
+    // ID3v2 tag in front (size 20, syncsafe) and an ID3v1 "TAG" at the end
+    juce::MemoryBlock id3 ("ID3\x04\x00\x00\x00\x00\x00\x14", 10);
+    id3.setSize (30, true);
+    CHECK (adtsSamples (concat ({ id3, stream, text ("TAG and the rest of an ID3v1 tag") }), 44100.0)
+           == std::optional<juce::int64> (4 * 1024));
+
+    // a cut-off last frame is not counted; not ADTS at all gives nothing
+    auto cut = concat ({ adtsFrame (4, 300), adtsFrame (4, 300) });
+    cut.setSize (cut.getSize() - 50);
+    CHECK (adtsSamples (cut, 44100.0) == std::optional<juce::int64> (1024));
+    CHECK (! adtsSamples (text ("RIFF....WAVEfmt "), 44100.0).has_value());
 }

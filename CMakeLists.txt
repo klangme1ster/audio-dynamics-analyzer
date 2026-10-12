@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.24)
 
 project(AudioDynamicsAnalyzer VERSION 0.1.0 LANGUAGES C CXX)
 
+# Release binaries must run without the Visual C++ redistributable: link the C/C++ runtime
+# statically (all targets, including JUCE and the tests)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 option(ADA_BUILD_PLUGIN "Build the JUCE VST3 plugin and standalone app" ON)
 option(ADA_BUILD_TESTS "Build the C++ engine tests" ON)
 

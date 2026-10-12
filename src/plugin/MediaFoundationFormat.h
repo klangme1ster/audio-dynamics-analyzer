@@ -48,6 +48,16 @@ struct Mp4Timing
 };
 Mp4Timing readMp4Timing (juce::InputStream& in, double sampleRate);
 
+// Exact length of a raw ADTS AAC stream (.aac): the number of AAC frames x 1024 samples, read
+// from the frame headers (an ID3v2 tag at the start is skipped). With SBR (HE-AAC), where the
+// decoder runs at twice the header's rate, each frame gives 2048 samples at `outputRate`.
+// nullopt if the stream does not start with ADTS frames.
+std::optional<juce::int64> countAdtsSamples (juce::InputStream& in, double outputRate);
+
+// True if Media Foundation can be used (mfplat.dll and mfreadwrite.dll load). They are
+// delay-loaded, so Windows "N" editions without the Media Feature Pack still run ADA, without M4A.
+bool mediaFoundationAvailable();
+
 // Registers JUCE's basic formats plus, on Windows, the Media Foundation M4A / AAC reader. Used by
 // the file analysis and by the command-line tools, so both read files the same way.
 void registerAudioFormats (juce::AudioFormatManager& formats);

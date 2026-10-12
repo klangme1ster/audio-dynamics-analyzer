@@ -3,6 +3,7 @@
 #include "Theme.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -308,24 +309,33 @@ void HistoryGraph::paint (juce::Graphics& g)
             return std::nullopt;
         return levelArea.getBottom() - (*value - lo) / (hi - lo) * levelArea.getHeight();
     };
-    auto targetLine = [&] (std::optional<float> y, juce::Colour colour, const juce::String& label, bool labelBelow) {
+    struct Label
+    {
+        juce::String text;
+        juce::Colour colour;
+        juce::Rectangle<float> area;
+    };
+    std::array<std::optional<Label>, 2> labels; // drawn after the curves, so they stay readable
+    auto targetLine = [&] (std::optional<float> y, juce::Colour colour, const juce::String& label, bool labelBelow,
+                           std::optional<Label>& out) {
         if (! y)
             return;
         g.setColour (colour.withAlpha (0.8f));
         g.drawDashedLine (juce::Line<float> (levelArea.getX(), *y, levelArea.getRight(), *y), dashes, 2, 1.0f);
-        g.setFont (juce::FontOptions (11.0f));
-        g.drawText (label, juce::Rectangle<float> (levelArea.getRight() - 160.0f, labelBelow ? *y + 1.0f : *y - 15.0f, 156.0f, 14.0f),
-                    juce::Justification::centredRight);
+        // a label that would leave the plot at the top (into the header text) goes below its line
+        const bool below = labelBelow || *y - 15.0f < levelArea.getY();
+        const float width = juce::GlyphArrangement::getStringWidth (juce::Font (juce::FontOptions (11.0f)), label) + 8.0f;
+        out = Label { label, colour, { levelArea.getRight() - width - 2.0f, below ? *y + 1.0f : *y - 15.0f, width, 14.0f } };
     };
     const auto loudnessY = lineY (targetLoudness), ceilingY = lineY (targetCeiling);
     // labels sit above their lines; when the lines are close, the lower line's label goes below it
     const bool close = loudnessY && ceilingY && std::abs (*loudnessY - *ceilingY) < 15.0f;
     if (loudnessY)
         targetLine (loudnessY, theme::shortTerm, "target " + theme::number (*targetLoudness) + " LUFS",
-                    close && *loudnessY >= *ceilingY);
+                    close && *loudnessY >= *ceilingY, labels[0]);
     if (ceilingY)
         targetLine (ceilingY, theme::truePeak, "ceiling " + theme::number (*targetCeiling) + " dBTP",
-                    close && *ceilingY > *loudnessY);
+                    close && *ceilingY > *loudnessY, labels[1]);
 
     drawSeries (g, levelArea, v, lo, hi, [] (const ada::DynamicsMetrics& f) { return f.truePeak3sDBTP; },
                 theme::truePeak, 1.5f);
@@ -336,6 +346,18 @@ void HistoryGraph::paint (juce::Graphics& g)
                     return ada::passesLivePsrGate (f) ? f.psr : std::numeric_limits<float>::quiet_NaN();
                 },
                 theme::psrLine, 1.5f);
+
+    if (labels[0] && labels[1] && labels[0]->area.intersects (labels[1]->area)) // both lines close to the top
+        labels[0]->area.setY (labels[1]->area.getBottom() + 1.0f);
+    g.setFont (juce::FontOptions (11.0f));
+    for (const auto& label : labels)
+        if (label)
+        {
+            g.setColour (theme::panel.withAlpha (0.85f));
+            g.fillRoundedRectangle (label->area, 3.0f);
+            g.setColour (label->colour);
+            g.drawText (label->text, label->area, juce::Justification::centred);
+        }
 
     drawHover (g, v, lo, hi);
 }

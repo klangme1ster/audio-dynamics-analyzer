@@ -19,3 +19,4 @@ reports/
 *.csv
 *.png
 !docs/*.png
+!docs/screenshots/*.png

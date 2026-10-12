@@ -40,3 +40,5 @@
 * Run C++ tests (engine + file analysis): `ctest --test-dir build -C Release`
 * Inspect the GUI without a host: `build/src/plugin/ada_view_snapshot_artefacts/Release/ada_view_snapshot.exe out.png [width] [height]`
 * Python ↔ C++ parity: `pytest python/tests/test_parity.py` (needs the built `ada_cli`; the M4A cases also need `ada_file_cli`, Windows only)
+* Release: bump `VERSION` in `CMakeLists.txt`, then push a tag `vX.Y.Z`; `.github/workflows/release.yml` builds, tests and publishes the zip
+* README screenshot: `python python/tools/capture_screenshot.py <audio file> docs/screenshots/file-view.png --size 2000x1250` (retake when the GUI changes visibly)
