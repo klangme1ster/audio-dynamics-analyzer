@@ -13,7 +13,7 @@ Find out how squashed a master is. ADA measures loudness and dynamics to **ITU-R
 | Stage | What | State |
 |---|---|---|
 | 1 | Python reference engine, batch scanner `ada-scan`, plotter `ada-plot` | ✅ working |
-| 2 | C++20 / JUCE 8 VST3 plugin + standalone app (drag-and-drop analysis) | ✅ live metering with history, PSR meter and zone bar; file analysis matching the Python reference (WAV/AIFF/FLAC). Delivery presets next |
+| 2 | C++20 / JUCE 8 VST3 plugin + standalone app (drag-and-drop analysis) | ✅ live metering with history, PSR meter and zone bar; file analysis matching the Python reference (WAV/AIFF/FLAC); measuring what Windows plays (standalone). Delivery presets next |
 
 The Python engine is the numerical reference. The C++ engine is a port of it and must match it within fixed tolerances (spec test ADA-PARITY).
 

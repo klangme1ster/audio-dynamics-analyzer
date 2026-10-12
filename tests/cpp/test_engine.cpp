@@ -199,3 +199,43 @@ TEST_CASE ("ADA-ORACLE: integrated loudness agrees with libebur128")
         CHECK (std::abs (*r.summary.integrated - oracle) <= 0.1);
     }
 }
+
+#include "InterleavedConvert.h"
+
+TEST_CASE ("Interleaved device samples convert to planar float (Windows output capture)")
+{
+    float l[3] {}, r[3] {};
+    float* dst[2] { l, r };
+
+    // 4-channel float (e.g. quad device): only front left/right are taken
+    const float f[12] = { 0.5f, -0.25f, 9.0f, 9.0f, 1.0f, -1.0f, 9.0f, 9.0f, 0.0f, 0.125f, 9.0f, 9.0f };
+    ada::interleavedToPlanar (reinterpret_cast<const std::uint8_t*> (f), ada::SampleFormat::float32, 4, 3, dst, 2);
+    CHECK (l[0] == 0.5f);
+    CHECK (r[0] == -0.25f);
+    CHECK (l[1] == 1.0f);
+    CHECK (r[2] == 0.125f);
+
+    const std::int16_t i16[4] = { 16384, -32768, 32767, 0 };
+    ada::interleavedToPlanar (reinterpret_cast<const std::uint8_t*> (i16), ada::SampleFormat::int16, 2, 2, dst, 2);
+    CHECK (l[0] == 0.5f);
+    CHECK (r[0] == -1.0f);
+    CHECK (l[1] == doctest::Approx (32767.0 / 32768.0));
+
+    // 24-bit little endian: 0x400000 = +0.5, 0xC00000 = -0.5
+    const std::uint8_t i24[6] = { 0x00, 0x00, 0x40, 0x00, 0x00, 0xC0 };
+    ada::interleavedToPlanar (i24, ada::SampleFormat::int24, 2, 1, dst, 2);
+    CHECK (l[0] == 0.5f);
+    CHECK (r[0] == -0.5f);
+
+    const std::int32_t i32[2] = { 1073741824, -2147483647 - 1 };
+    ada::interleavedToPlanar (reinterpret_cast<const std::uint8_t*> (i32), ada::SampleFormat::int32, 2, 1, dst, 2);
+    CHECK (l[0] == 0.5f);
+    CHECK (r[0] == -1.0f);
+
+    // mono device into a mono engine
+    float m[2] {};
+    float* mono[1] { m };
+    const float fm[2] = { 0.3f, -0.7f };
+    ada::interleavedToPlanar (reinterpret_cast<const std::uint8_t*> (fm), ada::SampleFormat::float32, 1, 2, mono, 1);
+    CHECK (m[1] == -0.7f);
+}

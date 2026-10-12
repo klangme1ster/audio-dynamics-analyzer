@@ -13,6 +13,7 @@ AdaAudioProcessor::AdaAudioProcessor()
     resetOnPlay = parameters.getRawParameterValue ("resetOnPlay");
     freezeWhenStopped = parameters.getRawParameterValue ("freezeWhenStopped");
     clipThreshold = parameters.getRawParameterValue ("clipThreshold");
+    liveAnalysis = parameters.getRawParameterValue ("liveAnalysis");
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout AdaAudioProcessor::createParameters()
@@ -22,6 +23,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AdaAudioProcessor::createPar
                                                     "New measurement when playback jumps", true),
         std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "freezeWhenStopped", 1 },
                                                     "Freeze while transport is stopped", true),
+        std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "liveAnalysis", 1 }, "Live analysis", true),
         std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "clipThreshold", 1 },
                                                      "Clip threshold",
                                                      juce::NormalisableRange<float> (-6.0f, 3.0f, 0.1f), 0.0f,
@@ -66,15 +68,29 @@ bool AdaAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) cons
 void AdaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
+    analyseBlock (buffer);
+
+    // In a DAW the plugin is an insert and passes audio through unchanged. The standalone app only
+    // measures its input; it plays it to the output only when asked (feedback risk with speakers).
+    if (wrapperType == wrapperType_Standalone && ! monitor.load (std::memory_order_relaxed))
+        buffer.clear();
+}
+
+void AdaAudioProcessor::analyseBlock (const juce::AudioBuffer<float>& buffer) noexcept
+{
+    const bool liveOn = liveAnalysis->load (std::memory_order_relaxed) > 0.5f;
+    liveStopped.store (! liveOn, std::memory_order_relaxed);
     if (! active.load (std::memory_order_relaxed))
         return;
 
+    // The transport is tracked even while live analysis is stopped, so switching it back on
+    // mid-song continues the measurement instead of looking like a position jump.
     bool analyse = true;
     const int numSamples = buffer.getNumSamples();
     const int skip = handleTransport (analyse, numSamples);
     frozen.store (! analyse, std::memory_order_relaxed);
-    if (! analyse || skip >= numSamples)
-        return; // display keeps the last values; the audio still passes through unchanged
+    if (! liveOn || ! analyse || skip >= numSamples)
+        return; // display keeps the last values
 
     // After a resume slightly before the pause point, audio that was already measured is skipped
     std::array<const float*, ada::DynamicsEngine::maxChannels> channels {};
@@ -137,6 +153,25 @@ AdaAudioProcessor::RestartInfo AdaAudioProcessor::lastRestart() const noexcept
     return info;
 }
 
+ada::OutputMonitor* AdaAudioProcessor::outputMonitor()
+{
+    if (output == nullptr && wrapperType == wrapperType_Standalone && ada::OutputMonitor::isSupported())
+        output = std::make_unique<ada::OutputMonitor>();
+    return output.get();
+}
+
+juce::Point<int> AdaAudioProcessor::savedEditorSize() const
+{
+    return { editorWidth.load(), editorHeight.load() };
+}
+
+void AdaAudioProcessor::saveEditorSize (int width, int height)
+{
+    // atomics: hosts may save the state from another thread while the window is being resized
+    editorWidth.store (width);
+    editorHeight.store (height);
+}
+
 juce::AudioProcessorEditor* AdaAudioProcessor::createEditor()
 {
     return new AdaAudioProcessorEditor (*this);
@@ -144,7 +179,10 @@ juce::AudioProcessorEditor* AdaAudioProcessor::createEditor()
 
 void AdaAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    if (auto xml = parameters.copyState().createXml())
+    auto state = parameters.copyState();
+    state.setProperty ("editorWidth", editorWidth.load(), nullptr);
+    state.setProperty ("editorHeight", editorHeight.load(), nullptr);
+    if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
 
@@ -152,7 +190,11 @@ void AdaAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
         if (xml->hasTagName (parameters.state.getType()))
+        {
+            editorWidth.store (xml->getIntAttribute ("editorWidth", 0));
+            editorHeight.store (xml->getIntAttribute ("editorHeight", 0));
             parameters.replaceState (juce::ValueTree::fromXml (*xml));
+        }
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

@@ -38,6 +38,10 @@ public:
     // because the engine only resets at its next bin boundary.
     void clearForReset();
 
+    // A new source (e.g. a freshly started capture engine, whose epochs start at 0 again):
+    // clears everything and accepts the next frame whatever its epoch.
+    void restart();
+
     int size() const noexcept { return count; }
     bool empty() const noexcept { return count == 0; }
     const DynamicsMetrics& at (int i) const noexcept; // 0 = oldest

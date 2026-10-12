@@ -2,6 +2,11 @@
 
 #include "Theme.h"
 
+#if JucePlugin_Build_Standalone
+ #include <juce_audio_utils/juce_audio_utils.h> // device classes the standalone header needs
+ #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
+#endif
+
 #include <cmath>
 
 namespace
@@ -147,6 +152,7 @@ void Readout::paint (juce::Graphics& g)
 
 AdaAudioProcessorEditor::AdaAudioProcessorEditor (AdaAudioProcessor& p)
     : AudioProcessorEditor (&p), processor (p), graph (p.history().store()),
+      liveAnalysisAttachment (p.parameters, "liveAnalysis", liveAnalysisToggle),
       resetOnPlayAttachment (p.parameters, "resetOnPlay", resetOnPlayToggle),
       freezeAttachment (p.parameters, "freezeWhenStopped", freezeToggle)
 {
@@ -171,12 +177,54 @@ AdaAudioProcessorEditor::AdaAudioProcessorEditor (AdaAudioProcessor& p)
                            "You can also drop a file anywhere on this window.");
     openButton.onClick = [this] { openFileChooser(); };
     addAndMakeVisible (openButton);
-    liveButton.setTooltip ("Return to metering the live input. The live history kept recording meanwhile.");
-    liveButton.onClick = [this] {
-        processor.fileAnalysis().cancel();
-        showFile (false);
+    // Live | Output | File view switch; Output exists in the standalone app on Windows only,
+    // the file view once a file was opened
+    for (auto* b : { &liveModeButton, &outputModeButton, &fileModeButton })
+    {
+        b->setClickingTogglesState (true);
+        b->setRadioGroupId (1);
+        b->setColour (juce::TextButton::buttonOnColourId, theme::shortTerm.darker (0.3f));
+        addAndMakeVisible (*b);
+    }
+    const bool hasOutput = processor.outputMonitor() != nullptr;
+    outputModeButton.setVisible (hasOutput);
+    liveModeButton.setConnectedEdges (juce::Button::ConnectedOnRight);
+    outputModeButton.setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
+    fileModeButton.setConnectedEdges (juce::Button::ConnectedOnLeft);
+    liveModeButton.setTooltip ("Show live metering of the audio input. Measuring continues in the background in every view.");
+    outputModeButton.setTooltip ("Measure what a Windows output device plays (e.g. Spotify, a browser, a media player).\n"
+                                 "Programs that play through ASIO bypass Windows and cannot be measured this way;\n"
+                                 "use your interface's loopback input or the plugin in your DAW for those.");
+    fileModeButton.setTooltip ("Show the analysis of the opened file (open or drop a file first).");
+    using V = AdaAudioProcessor::View;
+    liveModeButton.onClick = [this] { if (processor.view() != V::live) showView (V::live); };
+    outputModeButton.onClick = [this] { if (processor.view() != V::output) showView (V::output); };
+    fileModeButton.onClick = [this] { if (processor.view() != V::file) showView (V::file); };
+
+    deviceBox.setTooltip ("The Windows output device to measure. \"Default output\" follows the system setting.");
+    deviceBox.onChange = [this] {
+        if (outputToggle.getToggleState())
+            startOutputCapture();
     };
-    addChildComponent (liveButton);
+    addChildComponent (deviceBox);
+    outputToggle.setTooltip ("Start or stop measuring the selected output device. Starting begins a new measurement.");
+    outputToggle.setColour (juce::ToggleButton::textColourId, theme::textSecondary);
+    outputToggle.onClick = [this] {
+        if (auto* monitor = processor.outputMonitor())
+        {
+            if (outputToggle.getToggleState())
+                startOutputCapture();
+            else
+                monitor->stop();
+            updateFromHistory();
+        }
+    };
+    addChildComponent (outputToggle);
+
+    liveAnalysisToggle.setTooltip ("Start or stop live analysis of the input. When stopped, the display keeps\n"
+                                   "the last values and nothing is measured.");
+    liveAnalysisToggle.setColour (juce::ToggleButton::textColourId, theme::textSecondary);
+    addChildComponent (liveAnalysisToggle);
 
     // Controls
     resetButton.setTooltip ("Start a new measurement now (clears the history, integrated loudness, LRA, peaks and PSR statistics).");
@@ -188,14 +236,25 @@ AdaAudioProcessorEditor::AdaAudioProcessorEditor (AdaAudioProcessor& p)
     freezeToggle.setTooltip (
         "While the transport is stopped, keep the last values on screen instead of measuring the silence.\n"
         "Turn this off to meter live input while the transport is stopped.");
-    for (auto* t : { &resetOnPlayToggle, &freezeToggle })
+    monitorToggle.setTooltip ("Play the measured input to the audio output.\n"
+                              "Off by default: ADA measures the input without playing it, which avoids feedback.\n"
+                              "With speakers instead of headphones, turning this on can cause feedback.");
+    for (auto* t : { &resetOnPlayToggle, &freezeToggle, &monitorToggle })
         t->setColour (juce::ToggleButton::textColourId, theme::textSecondary);
 
     resetButton.onClick = [this] {
-        // The engine resets at its next bin boundary, which may be much later while the transport
-        // is frozen; the history clears now and ignores frames from the old measurement.
-        processor.requestReset();
-        processor.history().clearForReset();
+        if (outputModeShown)
+        {
+            if (auto* monitor = processor.outputMonitor())
+                monitor->requestReset();
+        }
+        else
+        {
+            // The engine resets at its next bin boundary, which may be much later while the transport
+            // is frozen; the history clears now and ignores frames from the old measurement.
+            processor.requestReset();
+            processor.history().clearForReset();
+        }
         updateFromHistory();
     };
     addAndMakeVisible (resetButton);
@@ -209,17 +268,38 @@ AdaAudioProcessorEditor::AdaAudioProcessorEditor (AdaAudioProcessor& p)
     addChildComponent (freezeToggle);
     resetOnPlayToggle.setVisible (inHost);
     freezeToggle.setVisible (inHost);
+    monitorToggle.setToggleState (processor.isMonitoringInput(), juce::dontSendNotification);
+    monitorToggle.onClick = [this] { processor.setMonitorInput (monitorToggle.getToggleState()); };
+    addChildComponent (monitorToggle);
+    monitorToggle.setVisible (! inHost);
+
+   #if JucePlugin_Build_Standalone
+    // The output stays silent unless "Play input to output" is on, so JUCE's own input mute (its
+    // feedback protection) is not needed and would only hide the input from the analysis.
+    if (! inHost)
+        if (auto* holder = juce::StandalonePluginHolder::getInstance())
+            holder->getMuteInputValue().setValue (false);
+   #endif
 
     activeShown = processor.isAnalysisActive();
+    // Read the remembered size first: setResizeLimits() already resizes (and would overwrite it)
+    const auto saved = processor.savedEditorSize();
+    constexpr int minW = 860, minH = 560, maxW = 2400, maxH = 1600;
     setResizable (true, true);
-    setResizeLimits (860, 560, 2400, 1600);
-    setSize (980, 660);
-    showFile (processor.isShowingFile());
+    setResizeLimits (minW, minH, maxW, maxH);
+    setSize (saved.x > 0 ? juce::jlimit (minW, maxW, saved.x) : 980, saved.y > 0 ? juce::jlimit (minH, maxH, saved.y) : 660);
+    sizeRestored = true; // from now on, size changes are the user's and are remembered
+    showView (processor.view());
 
     // Standalone: "Audio Dynamics Analyzer.exe song.flac" (also Explorer's "Open with") analyses the file
     if (! inHost && processor.takeCommandLineFile())
         for (auto arg : juce::JUCEApplicationBase::getCommandLineParameterArray())
         {
+            if (arg == "--output" && hasOutput)
+            {
+                showView (AdaAudioProcessor::View::output);
+                break;
+            }
             const auto file = juce::File::getCurrentWorkingDirectory().getChildFile (arg.unquoted());
             if (file.existsAsFile() && processor.fileAnalysis().isSupportedFile (file))
             {
@@ -234,10 +314,50 @@ AdaAudioProcessorEditor::~AdaAudioProcessorEditor() { stopTimer(); }
 
 // --- Modes -------------------------------------------------------------------------------------
 
-void AdaAudioProcessorEditor::showFile (bool shouldShowFile)
+const ada::HistoryStore& AdaAudioProcessorEditor::liveLikeStore()
 {
-    processor.setShowingFile (shouldShowFile);
+    auto* monitor = processor.outputMonitor();
+    return outputModeShown && monitor != nullptr ? monitor->store() : processor.history().store();
+}
+
+void AdaAudioProcessorEditor::refreshDevices()
+{
+    auto* monitor = processor.outputMonitor();
+    if (monitor == nullptr)
+        return;
+    deviceList = monitor->devices();
+    deviceBox.clear (juce::dontSendNotification);
+    int selected = 1;
+    for (size_t i = 0; i < deviceList.size(); ++i)
+    {
+        deviceBox.addItem (deviceList[i].name, (int) i + 1);
+        if (deviceList[i].id == monitor->deviceId())
+            selected = (int) i + 1;
+    }
+    deviceBox.setSelectedId (selected, juce::dontSendNotification);
+}
+
+void AdaAudioProcessorEditor::startOutputCapture()
+{
+    auto* monitor = processor.outputMonitor();
+    const int index = deviceBox.getSelectedId() - 1;
+    if (monitor == nullptr || index < 0 || index >= (int) deviceList.size())
+        return;
+    if (! monitor->start (deviceList[(size_t) index].id))
+        outputToggle.setToggleState (false, juce::dontSendNotification);
+    shownVersion = 0;
+    updateFromHistory();
+}
+
+void AdaAudioProcessorEditor::showView (AdaAudioProcessor::View view)
+{
+    using V = AdaAudioProcessor::View;
+    if (view == V::output && processor.outputMonitor() == nullptr)
+        view = V::live;
+    processor.setView (view);
+    const bool shouldShowFile = view == V::file;
     fileModeShown = shouldShowFile;
+    outputModeShown = view == V::output;
     const auto& text = shouldShowFile ? fileText : liveText;
     for (int i = 0; i < numFields; ++i)
         readouts[(size_t) i]->setLabel (text[i].label, text[i].unit, text[i].help);
@@ -257,8 +377,27 @@ void AdaAudioProcessorEditor::showFile (bool shouldShowFile)
         meter.restoreDefaultTooltip();
         zoneBar.restoreDefaultTooltip();
     }
-    liveButton.setVisible (shouldShowFile);
+    liveModeButton.setToggleState (view == V::live, juce::dontSendNotification);
+    outputModeButton.setToggleState (view == V::output, juce::dontSendNotification);
+    fileModeButton.setToggleState (view == V::file, juce::dontSendNotification);
+    liveAnalysisToggle.setVisible (view == V::live);
+    deviceBox.setVisible (outputModeShown);
+    outputToggle.setVisible (outputModeShown);
     resetButton.setEnabled (! shouldShowFile);
+    updateRestartStatus();
+
+    if (outputModeShown)
+    {
+        refreshDevices();
+        auto* monitor = processor.outputMonitor();
+        // first visit: start measuring the default output right away
+        if (! monitor->isRunning() && monitor->errorText().isEmpty() && monitor->deviceName().isEmpty())
+        {
+            outputToggle.setToggleState (true, juce::dontSendNotification);
+            startOutputCapture();
+        }
+        outputToggle.setToggleState (monitor->isRunning(), juce::dontSendNotification);
+    }
 
     if (shouldShowFile)
     {
@@ -269,8 +408,12 @@ void AdaAudioProcessorEditor::showFile (bool shouldShowFile)
     }
     else
     {
-        graph.setStore (processor.history().store());
-        graph.setStatusText ({});
+        graph.setStore (liveLikeStore());
+        if (outputModeShown)
+            graph.setStatusText ("Output");
+        else
+            graph.setStatusText (processor.isLiveStopped() ? "Live analysis stopped" : juce::String());
+        shownVersion = 0;
         updateFromHistory();
         updateRestartStatus();
     }
@@ -281,7 +424,7 @@ void AdaAudioProcessorEditor::showFile (bool shouldShowFile)
 void AdaAudioProcessorEditor::analyseFile (const juce::File& file)
 {
     processor.fileAnalysis().start (file); // a failure is shown in the source bar
-    showFile (true);
+    showView (AdaAudioProcessor::View::file);
 }
 
 void AdaAudioProcessorEditor::openFileChooser()
@@ -333,12 +476,35 @@ void AdaAudioProcessorEditor::filesDropped (const juce::StringArray& files, int,
 
 void AdaAudioProcessorEditor::updateFromHistory()
 {
-    const auto& store = processor.history().store();
-    shownVersion = store.version();
     if (fileModeShown)
         return;
+    const auto& store = liveLikeStore();
+    auto* monitor = processor.outputMonitor();
+    shownVersion = outputModeShown && monitor != nullptr ? monitor->version() : store.version();
 
-    sourceLabel.setText ("Live input. Drop an audio file here, or open one, to analyse it.", juce::dontSendNotification);
+    if (outputModeShown && monitor != nullptr)
+    {
+        juce::String text, details;
+        if (monitor->errorText().isNotEmpty())
+            text = details = monitor->errorText();
+        else if (monitor->isRunning())
+        {
+            const auto format = juce::String (monitor->sampleRate() / 1000.0, 1) + " kHz"
+                                + (monitor->channels() > 2 ? ", front left/right" : "");
+            text = "Measuring the output (" + format + ")";
+            details = "Measuring what " + monitor->deviceName() + " plays (" + format + ").";
+        }
+        else
+            text = details = "Output analysis stopped.";
+        sourceLabel.setText (text, juce::dontSendNotification);
+        sourceLabel.setTooltip (details);
+        graph.setStatusText (monitor->isRunning() ? "Output" : "Output analysis stopped");
+    }
+    else
+    {
+        sourceLabel.setText ("Live input. Drop an audio file here, or open one, to analyse it.", juce::dontSendNotification);
+        sourceLabel.setTooltip ({});
+    }
     const auto stats = store.psrStats();
     const float nan = std::numeric_limits<float>::quiet_NaN();
     if (store.empty())
@@ -462,6 +628,12 @@ void AdaAudioProcessorEditor::updateRestartStatus()
 {
     const auto restart = processor.lastRestart();
     shownRestartCount = restart.count;
+    if (fileModeShown || outputModeShown) // restart reasons describe live metering only
+    {
+        statusLabel.setText ({}, juce::dontSendNotification);
+        statusLabel.setTooltip ({});
+        return;
+    }
     const double fs = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 48000.0;
     using R = AdaAudioProcessor::RestartReason;
     const juce::String arrow (juce::CharPointer_UTF8 (" \xe2\x86\x92 "));
@@ -499,15 +671,26 @@ void AdaAudioProcessorEditor::timerCallback()
         resized();
         repaint();
     }
+    auto* monitor = processor.outputMonitor();
+    if (monitor != nullptr)
+        monitor->setClipThreshold (processor.parameters.getRawParameterValue ("clipThreshold")->load());
     if (fileModeShown)
     {
         if (processor.fileAnalysis().version() != shownFileVersion)
             updateFromFile();
     }
+    else if (outputModeShown && monitor != nullptr)
+    {
+        if (monitor->version() != shownVersion)
+            updateFromHistory();
+        if (monitor->isRunning() != outputToggle.getToggleState()) // e.g. the device was removed
+            outputToggle.setToggleState (monitor->isRunning(), juce::dontSendNotification);
+    }
     else if (processor.history().store().version() != shownVersion)
         updateFromHistory();
 
-    const bool frozen = processor.isFrozen() && ! fileModeShown;
+    const bool liveView = ! fileModeShown && ! outputModeShown;
+    const bool frozen = processor.isFrozen() && liveView;
     if (frozen != frozenShown)
     {
         frozenShown = frozen;
@@ -515,6 +698,41 @@ void AdaAudioProcessorEditor::timerCallback()
     }
     if (processor.lastRestart().count != shownRestartCount)
         updateRestartStatus();
+
+    const bool liveStopped = processor.isLiveStopped() && liveView;
+    if (liveStopped != liveStoppedShown)
+    {
+        liveStoppedShown = liveStopped;
+        if (liveView)
+            graph.setStatusText (liveStopped ? "Live analysis stopped" : juce::String());
+        repaint();
+    }
+    fileModeButton.setEnabled (processor.fileAnalysis().state() != ada::FileAnalysis::State::idle);
+    updateWindowTitle();
+}
+
+void AdaAudioProcessorEditor::updateWindowTitle()
+{
+    // Standalone only: the plugin cannot change a host's window title
+    if (processor.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
+        return;
+    juce::String title = JucePlugin_Name;
+    const auto& fa = processor.fileAnalysis();
+    const juce::String dash (juce::CharPointer_UTF8 (" \xe2\x80\x93 "));
+    if (fileModeShown && fa.state() != ada::FileAnalysis::State::idle)
+        title += dash + fa.file().getFileName()
+                 + (fa.durationSeconds() > 0.0 ? " (" + theme::timeLabel (fa.durationSeconds()) + ")" : juce::String());
+    else if (outputModeShown && processor.outputMonitor() != nullptr)
+        title += dash + "output: " + processor.outputMonitor()->deviceName();
+    else
+        title += juce::String (juce::CharPointer_UTF8 (" \xe2\x80\x93 live input"));
+    if (title == shownTitle)
+        return;
+    if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
+    {
+        window->setName (title);
+        shownTitle = title;
+    }
 }
 
 // --- Layout and painting ---------------------------------------------------------------------
@@ -534,14 +752,15 @@ void AdaAudioProcessorEditor::paint (juce::Graphics& g)
                           "You can still analyse audio files: drop one here or use \"Open file...\".",
                           area, juce::Justification::centred, 4);
     }
-    if (frozenShown)
+    if (liveStoppedShown || frozenShown)
     {
         auto pill = getLocalBounds().reduced (gap).removeFromBottom (controlsHeight).removeFromRight (200).reduced (0, 4);
         g.setColour (theme::grid);
         g.fillRoundedRectangle (pill.toFloat(), 11.0f);
         g.setColour (theme::textPrimary);
         g.setFont (juce::FontOptions (12.0f));
-        g.drawText ("Frozen (transport stopped)", pill, juce::Justification::centred);
+        g.drawText (liveStoppedShown ? "Live analysis stopped" : "Frozen (transport stopped)", pill,
+                    juce::Justification::centred);
     }
 }
 
@@ -566,6 +785,9 @@ void AdaAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
 
 void AdaAudioProcessorEditor::resized()
 {
+    if (sizeRestored)
+        processor.saveEditorSize (getWidth(), getHeight());
+
     const bool visible = contentVisible();
     for (juce::Component* c : { (juce::Component*) &graph, (juce::Component*) &meter, (juce::Component*) &zoneBar })
         c->setVisible (visible);
@@ -575,10 +797,21 @@ void AdaAudioProcessorEditor::resized()
     auto area = getLocalBounds().reduced (gap);
 
     auto source = area.removeFromTop (sourceBarHeight);
-    if (liveButton.isVisible())
-        liveButton.setBounds (source.removeFromRight (110));
-    source.removeFromRight (6);
+    liveModeButton.setBounds (source.removeFromLeft (64));
+    if (outputModeButton.isVisible())
+        outputModeButton.setBounds (source.removeFromLeft (72));
+    fileModeButton.setBounds (source.removeFromLeft (64));
+    source.removeFromLeft (12);
     openButton.setBounds (source.removeFromRight (110));
+    source.removeFromRight (8);
+    if (liveAnalysisToggle.isVisible())
+        liveAnalysisToggle.setBounds (source.removeFromRight (120));
+    if (outputToggle.isVisible())
+    {
+        outputToggle.setBounds (source.removeFromRight (140));
+        source.removeFromRight (8);
+        deviceBox.setBounds (source.removeFromRight (juce::jmin (300, source.getWidth() / 2)).reduced (0, 2));
+    }
     source.removeFromRight (8);
     sourceLabel.setBounds (source);
     area.removeFromTop (gap);
@@ -586,8 +819,13 @@ void AdaAudioProcessorEditor::resized()
     auto controls = area.removeFromBottom (controlsHeight);
     resetButton.setBounds (controls.removeFromLeft (80));
     controls.removeFromLeft (12);
-    resetOnPlayToggle.setBounds (controls.removeFromLeft (280));
-    freezeToggle.setBounds (controls.removeFromLeft (180));
+    if (monitorToggle.isVisible())
+        monitorToggle.setBounds (controls.removeFromLeft (200));
+    else
+    {
+        resetOnPlayToggle.setBounds (controls.removeFromLeft (280));
+        freezeToggle.setBounds (controls.removeFromLeft (180));
+    }
     controls.removeFromLeft (8);
     statusLabel.setBounds (controls.withTrimmedRight (210)); // room for the "Frozen" badge
     area.removeFromBottom (gap);

@@ -121,6 +121,7 @@ void HistoryGraph::drawSeries (juce::Graphics& g, juce::Rectangle<float> area, c
         // More frames than pixels: draw each pixel column's min-max envelope
         int column = std::numeric_limits<int>::min();
         float lowest = 0.0f, highest = 0.0f;
+        float lastValue = std::numeric_limits<float>::quiet_NaN();
         bool any = false;
         auto flush = [&] {
             if (! any)
@@ -134,13 +135,17 @@ void HistoryGraph::drawSeries (juce::Graphics& g, juce::Rectangle<float> area, c
         {
             const auto& f = store->at (i);
             const int c = (int) std::floor (xOf (frameTime (f), v) - area.getX());
+            const float value = get (f);
             if (c != column)
             {
                 flush();
+                // Start the new column at the previous value so neighbouring columns join up;
+                // otherwise steep slopes break into dots. A real gap (non-finite) stays a gap.
+                any = std::isfinite (lastValue) && std::isfinite (value) && c == column + 1;
+                lowest = highest = lastValue;
                 column = c;
-                any = false;
             }
-            const float value = get (f);
+            lastValue = value;
             if (! std::isfinite (value))
                 continue;
             lowest = any ? std::min (lowest, value) : value;

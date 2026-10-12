@@ -4,6 +4,7 @@
 #include "FileAnalysis.h"
 #include "MetricsFifo.h"
 #include "MetricsHistory.h"
+#include "OutputMonitor.h"
 #include "TransportTracker.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -59,13 +60,24 @@ public:
     RestartInfo lastRestart() const noexcept;
     ada::MetricsHistory& history() noexcept { return metricsHistory; }
     ada::FileAnalysis& fileAnalysis() noexcept { return files; }
-    // Whether the editor shows the analysed file instead of live metering (message thread)
-    bool isShowingFile() const noexcept { return showingFile; }
-    void setShowingFile (bool shouldShow) noexcept { showingFile = shouldShow; }
+    // What the editor shows (message thread): live input, a Windows output device, or a file
+    enum class View { live, output, file };
+    View view() const noexcept { return currentView; }
+    void setView (View v) noexcept { currentView = v; }
+    // Windows output capture; standalone app on Windows only, otherwise nullptr (message thread)
+    ada::OutputMonitor* outputMonitor();
     // Standalone: a file given on the command line is analysed once, when the first editor opens
     bool takeCommandLineFile() noexcept { return ! std::exchange (commandLineHandled, true); }
     bool isAnalysisActive() const noexcept { return active.load(); }
     bool isFrozen() const noexcept { return frozen.load (std::memory_order_relaxed); }
+    bool isLiveStopped() const noexcept { return liveStopped.load (std::memory_order_relaxed); }
+    // Standalone only: play the measured input to the output (off at every start: feedback risk)
+    void setMonitorInput (bool on) noexcept { monitor.store (on); }
+    bool isMonitoringInput() const noexcept { return monitor.load(); }
+
+    // Editor size, stored with the plugin state so it is restored next time (message thread)
+    juce::Point<int> savedEditorSize() const;
+    void saveEditorSize (int width, int height);
     double analysisSampleRate() const noexcept { return engine.sampleRate(); }
 
     juce::AudioProcessorValueTreeState parameters;
@@ -77,9 +89,12 @@ private:
     ada::MetricsFifo fifo;
     ada::MetricsHistory metricsHistory { fifo }; // message thread: drains the FIFO, keeps 90 min
     ada::FileAnalysis files;                     // offline analysis of dropped/opened files
-    bool showingFile = false, commandLineHandled = false;
+    View currentView = View::live;
+    bool commandLineHandled = false;
+    std::unique_ptr<ada::OutputMonitor> output;
     std::atomic<bool> active { false };
     int handleTransport (bool& analyse, int numSamples) noexcept; // returns samples to skip
+    void analyseBlock (const juce::AudioBuffer<float>& buffer) noexcept;
     void noteRestart (RestartReason reason, std::int64_t from, std::int64_t to) noexcept;
 
     ada::TransportTracker transport;
@@ -88,10 +103,13 @@ private:
     std::atomic<int> restartReason { 0 };
     std::atomic<std::int64_t> restartFrom { -1 }, restartTo { -1 };
     std::atomic<std::uint32_t> restartCount { 0 };
-    std::atomic<bool> frozen { false };
+    std::atomic<bool> frozen { false }, liveStopped { false };
+    std::atomic<int> editorWidth { 0 }, editorHeight { 0 };
+    std::atomic<bool> monitor { false }; // standalone: play input to output; never saved, off at start
     std::atomic<float>* resetOnPlay = nullptr;
     std::atomic<float>* freezeWhenStopped = nullptr;
     std::atomic<float>* clipThreshold = nullptr;
+    std::atomic<float>* liveAnalysis = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AdaAudioProcessor)
 };

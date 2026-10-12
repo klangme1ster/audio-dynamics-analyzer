@@ -29,6 +29,13 @@ void HistoryStore::clear()
     ++changeCount;
 }
 
+void HistoryStore::restart()
+{
+    epoch.reset();
+    ignoredEpoch.reset();
+    clear();
+}
+
 void HistoryStore::clearForReset()
 {
     ignoredEpoch = epoch;

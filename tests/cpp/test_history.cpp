@@ -75,6 +75,17 @@ TEST_CASE ("Reset clears at once and ignores late frames of the old epoch")
     CHECK (h.size() == 1);
 }
 
+TEST_CASE ("restart() accepts a new source whose epochs start at 0 again")
+{
+    ada::HistoryStore h;
+    for (int i = 0; i < 50; ++i)
+        h.push (frame (i, 10.0f, 0));
+    h.restart();
+    CHECK (h.empty());
+    h.push (frame (0, 12.0f, 0)); // same epoch number as before, but a new engine
+    CHECK (h.size() == 1);
+}
+
 TEST_CASE ("Every new measurement gets a new id (the graph returns to live on it)")
 {
     ada::HistoryStore h;

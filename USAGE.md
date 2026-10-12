@@ -170,14 +170,28 @@ Compare a mix with good references in the same genre rather than chasing a singl
 **Transport behaviour (inside a DAW).**
 * **Freeze while stopped** (default on): when you stop or pause, the values stay on screen instead of measuring the silence. A "Frozen" badge shows this state. Turn it off to meter live input while the transport is stopped.
 * **New measurement when playback jumps** (default on): pausing and continuing from the same spot keeps the measurement running (also when the host resumes slightly earlier than where it processed up to, as Cubase does with ASIO-Guard; the overlap is not counted twice), and so does cycle/loop playback. Jumping elsewhere, for example back to the song start (also while playing), begins a new measurement. The reason for the last automatic restart is shown next to the switches; hover over it for details.
-* **Reset** button: start a new measurement at any time.
+* **Reset** button: start a new measurement at any time (Live and Output views).
 
-The standalone app has no transport, so it always measures its audio input. JUCE mutes the input until you pick a device under *Options*, to avoid feedback.
+**Views.** The switch at the top left changes what the window shows: **Live** (the audio input), **Output** (what a Windows output device plays; standalone app on Windows only) and **File**. All of them keep running in the background: the live history keeps recording while you look at a file or an output, and so on. **File** becomes available once a file has been opened.
+
+**Live analysis** (switch at the top, live view): turns measuring of the input on and off. When off, the display keeps the last values and shows "Live analysis stopped"; nothing is measured.
+
+**Window size.** The window remembers its size: the standalone app between sessions, the plugin inside a DAW with the project.
+
+**Standalone app.**
+* It has no transport, so it measures its audio input whenever **Live analysis** is on (pick the device under *Options*).
+* It measures the input *without* playing it: the output stays silent unless you turn on **Play input to output**, which is off at every start. That avoids feedback, so JUCE's feedback protection (input mute) is switched off; leave "Mute audio input" in the *Options* audio settings unticked, or the analysis receives silence. With speakers instead of headphones, turning playback on can cause feedback.
+* **Output view: measuring what Windows plays.** Pick an output device in the list (*Default output* follows the Windows setting) and ADA measures everything that device plays, for example Spotify, a browser or a media player. It starts measuring the default output the first time you open the view; **Output analysis** turns it off and on, and **Reset** starts a new measurement. Pauses in playback are measured as silence, so the time axis keeps running.
+  * This uses Windows' loopback capture, which sees the audio after the Windows mixer, including per-application volume. Programs that play through ASIO (e.g. Cubase) bypass the Windows mixer and cannot be measured this way: use the plugin on Cubase's master bus, or your interface's loopback input in the **Live** view.
+  * Surround devices are measured on their front left and right channels. The device must run at a sample rate that is a multiple of 100 Hz (44.1, 48, 96 kHz, ...).
+  * Start the app directly in this view with `"Audio Dynamics Analyzer.exe" --output`.
+* To measure what another program plays through ASIO, choose your audio interface's loopback channel (or a virtual audio cable) as the input under *Options* and use the **Live** view.
+* The window remembers its position between sessions. The title bar shows what you are looking at, e.g. "Audio Dynamics Analyzer – song.flac (3:45)", "– output: Default output (Speakers)" or "– live input".
 
 **Analysing a file.** Drop an audio file anywhere on the window, or click **Open file...** (WAV, AIFF, FLAC, Ogg, MP3 or WMA; M4A/AAC files are not supported by the plugin yet, use `ada-scan` for them). This works in the standalone app and inside the plugin, for example to check a reference track while mixing. The file is analysed in the background at several hundred times real time; the graph fills as it goes and then zooms out to the whole file.
 * The readouts switch to the file's results: PSR mean, PSR min and PSR P10, max short-term (Max S) and max momentary (Max M) loudness, integrated loudness, LRA, max true peak and PLR. For WAV, AIFF and FLAC these are the same values `ada-scan` reports; for MP3 they can differ slightly (different decoder).
 * The meter shows the PSR over the file (mean as the bar, min and P10 as markers), and the zone bar the whole file.
-* **Back to live** returns to live metering; the live history kept recording meanwhile.
+* Switch back with **Live**; the live history kept recording meanwhile.
 * The standalone app also opens a file given on the command line, so you can use Explorer's *Open with* on an audio file: `"Audio Dynamics Analyzer.exe" song.flac`.
 * Files must be mono or stereo at a sample rate that is a multiple of 100 Hz (32, 44.1, 48, 88.2, 96, 176.4, 192 kHz); others are rejected with a message.
 

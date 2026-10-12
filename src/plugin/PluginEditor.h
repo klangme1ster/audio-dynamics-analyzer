@@ -54,16 +54,25 @@ private:
     void updateFromHistory();
     void updateFromFile();
     void updateRestartStatus();
-    void showFile (bool shouldShowFile);
+    void showView (AdaAudioProcessor::View view);
+    void refreshDevices();
+    void startOutputCapture();
+    const ada::HistoryStore& liveLikeStore();
     void analyseFile (const juce::File& file);
     void openFileChooser();
-    bool contentVisible() const noexcept { return processor.isShowingFile() || activeShown; }
+    void updateWindowTitle();
+    bool contentVisible() const noexcept { return processor.view() != AdaAudioProcessor::View::live || activeShown; }
 
     AdaAudioProcessor& processor;
     juce::TooltipWindow tooltipWindow { this, 400 };
 
+    juce::TextButton liveModeButton { "Live" }, outputModeButton { "Output" }, fileModeButton { "File" }; // view switch
+    juce::ComboBox deviceBox;                                  // output view: Windows output device
+    juce::ToggleButton outputToggle { "Output analysis" };    // output view: capture on/off
     juce::Label sourceLabel;
-    juce::TextButton openButton { "Open file..." }, liveButton { "Back to live" };
+    juce::TextButton openButton { "Open file..." };
+    juce::ToggleButton liveAnalysisToggle { "Live analysis" };
+    juce::AudioProcessorValueTreeState::ButtonAttachment liveAnalysisAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
 
     std::array<std::unique_ptr<Readout>, numFields> readouts;
@@ -73,13 +82,18 @@ private:
     juce::TextButton resetButton { "Reset" };
     juce::ToggleButton resetOnPlayToggle { "New measurement when playback jumps" };
     juce::ToggleButton freezeToggle { "Freeze while stopped" };
+    juce::ToggleButton monitorToggle { "Play input to output" }; // standalone only
     juce::AudioProcessorValueTreeState::ButtonAttachment resetOnPlayAttachment, freezeAttachment;
     juce::Label statusLabel; // why the current measurement started (automatic restarts only), with tooltip
 
     std::uint64_t shownVersion = 0, shownFileVersion = 0, shownRunId = 0;
     const ada::HistoryStore emptyStore { 1 }; // graph source when no file history exists
     std::uint32_t shownRestartCount = 0;
-    bool frozenShown = false, activeShown = false, dragHover = false, fileModeShown = false;
+    bool frozenShown = false, liveStoppedShown = false, activeShown = false, dragHover = false, fileModeShown = false,
+         outputModeShown = false;
+    std::vector<ada::OutputDevice> deviceList;
+    juce::String shownTitle;
+    bool sizeRestored = false;
     ada::FileAnalysis::State shownFileState = ada::FileAnalysis::State::idle;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AdaAudioProcessorEditor)

@@ -16,6 +16,7 @@ target_sources(AudioDynamicsAnalyzer PRIVATE
     DynamicsViews.cpp
     FileAnalysis.cpp
     HistoryGraph.cpp
+    OutputMonitor.cpp
     PluginEditor.cpp
     PluginProcessor.cpp)
 
