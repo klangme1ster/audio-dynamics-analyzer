@@ -101,4 +101,8 @@ Test IDs (T3341-*, T3342-*, ADA-*) refer to §2 of `PROJECT_SPECIFICATION.md`. E
   - WASAPI loopback capture of a chosen render endpoint (device list with "Default output"), own engine on a capture thread, own 90-minute history; silence filled in while nothing plays; device removal reported.
   - Editor: **Live | Output | File** view switch, device list, "Output analysis" on/off, Reset per view, title `– output: <device>`, `--output` command-line option.
   - Tests: sample conversion (`ada::interleavedToPlanar`, float32 / int16 / int24 / int32, surround → front L/R) in `tests/cpp/test_engine.cpp`; capture verified manually with a −35 dBFS test tone (measured −35.6 LUFS / −35.4 dBTP through the Windows mixer).
-- [ ] **4.5 Delivery target presets** — user-editable defaults: Spotify −14 LUFS / −1 dBTP, Apple Music −16 LUFS / −1 dBTP, YouTube −14 LUFS / −1 dBTP. Check current platform documentation before release.
+- [x] **4.5 Delivery target presets (`src/engine/DeliveryTargets.h`, `TargetPanel` in `src/plugin/DynamicsViews.cpp`)**
+  - Presets: Spotify (−14 LUFS, −1 dBTP, −2 dBTP for masters louder than −14), Apple Music (−16 / −1), YouTube (−14 / −1), Tidal (−14 / −1), EBU R 128 (−23 ±0.5 LU / −1), ATSC A/85 (−24 ±2 / −2), Custom (dialog). Saved with the plugin state.
+  - `ada::evaluateTarget` (pure, tested in `tests/cpp/test_engine.cpp`): streaming deviations are warnings ("turned down by X dB"), broadcast deviations problems; peaks above the ceiling warning (streaming) or problem (broadcast, or above 0 dBTP).
+  - Compact target box in the corner under the PSR meter (selector, icon + short line per verdict, full sentences in the tooltip) in all three views; the zone bar spans the graph's width; dashed target and ceiling lines in the history graph.
+  - Check current platform documentation before a release.

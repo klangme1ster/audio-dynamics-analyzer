@@ -239,3 +239,52 @@ TEST_CASE ("Interleaved device samples convert to planar float (Windows output c
     ada::interleavedToPlanar (reinterpret_cast<const std::uint8_t*> (fm), ada::SampleFormat::float32, 1, 2, mono, 1);
     CHECK (m[1] == -0.7f);
 }
+
+#include "DeliveryTargets.h"
+
+TEST_CASE ("Delivery targets: loudness and peak verdicts")
+{
+    using ada::TargetStatus;
+    const auto& spotify = ada::deliveryTargets[0];
+    const auto& ebu = ada::deliveryTargets[4];
+
+    // loud master: turned down, and Spotify's stricter -2 dBTP ceiling applies
+    auto v = ada::evaluateTarget (spotify, -8.6, -1.5);
+    CHECK (v.loudness == TargetStatus::warning);
+    CHECK (v.loudnessDelta == doctest::Approx (5.4));
+    CHECK (v.ceiling == -2.0);
+    CHECK (v.peak == TargetStatus::warning);
+    CHECK (v.peakMargin == doctest::Approx (-0.5));
+
+    // on target, within the -1 dBTP ceiling
+    v = ada::evaluateTarget (spotify, -14.4, -1.2);
+    CHECK (v.loudness == TargetStatus::ok);
+    CHECK (v.ceiling == -1.0);
+    CHECK (v.peak == TargetStatus::ok);
+
+    // quieter than the target; inter-sample peaks above 0 dBTP clip
+    v = ada::evaluateTarget (spotify, -18.0, 0.3);
+    CHECK (v.loudness == TargetStatus::warning);
+    CHECK (v.loudnessDelta == doctest::Approx (-4.0));
+    CHECK (v.peak == TargetStatus::problem);
+
+    // broadcast: outside +-0.5 LU or above the ceiling is a problem
+    CHECK (ada::evaluateTarget (ebu, -23.4, -3.0).loudness == TargetStatus::ok);
+    CHECK (ada::evaluateTarget (ebu, -22.3, -3.0).loudness == TargetStatus::problem);
+    CHECK (ada::evaluateTarget (ebu, -23.0, -0.8).peak == TargetStatus::problem);
+
+    // limits count as on target, also for custom values stored as float
+    auto custom = ada::deliveryTargets[ada::customTargetIndex];
+    custom.loudness = (double) -14.3f;
+    custom.peakCeiling = (double) -1.3f;
+    v = ada::evaluateTarget (custom, -13.3, -1.3);
+    CHECK (v.loudness == TargetStatus::ok);
+    CHECK (v.peak == TargetStatus::ok);
+    CHECK (ada::evaluateTarget (custom, -13.2, -1.2).peak == TargetStatus::warning);
+    CHECK (ada::evaluateTarget (spotify, -14.0, -1.5).ceiling == -1.0); // exactly on target: normal ceiling
+
+    // nothing measured yet
+    v = ada::evaluateTarget (ebu, std::nullopt, std::nullopt);
+    CHECK (v.loudness == TargetStatus::unknown);
+    CHECK (v.peak == TargetStatus::unknown);
+}

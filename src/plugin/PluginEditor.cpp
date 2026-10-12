@@ -12,7 +12,7 @@
 namespace
 {
 constexpr float loudnessFloor = -70.0f; // BS.1770 absolute gate; anything below reads as "< -70"
-constexpr int sourceBarHeight = 28, readoutsHeight = 54, zoneBarHeight = 62, controlsHeight = 30, meterWidth = 130,
+constexpr int sourceBarHeight = 28, readoutsHeight = 54, zoneBarHeight = 72, controlsHeight = 30, meterWidth = 170,
               gap = 8;
 
 struct ReadoutText
@@ -167,6 +167,16 @@ AdaAudioProcessorEditor::AdaAudioProcessorEditor (AdaAudioProcessor& p)
     addAndMakeVisible (graph);
     addAndMakeVisible (meter);
     addAndMakeVisible (zoneBar);
+    addAndMakeVisible (targetPanel);
+    targetPanel.onSelect = [this] (int index) {
+        if (index == ada::customTargetIndex)
+        {
+            editCustomTarget();
+            return;
+        }
+        processor.setTargetIndex (index);
+        applyTarget();
+    };
 
     // Source bar
     sourceLabel.setFont (juce::FontOptions (13.0f));
@@ -289,6 +299,7 @@ AdaAudioProcessorEditor::AdaAudioProcessorEditor (AdaAudioProcessor& p)
     setResizeLimits (minW, minH, maxW, maxH);
     setSize (saved.x > 0 ? juce::jlimit (minW, maxW, saved.x) : 980, saved.y > 0 ? juce::jlimit (minH, maxH, saved.y) : 660);
     sizeRestored = true; // from now on, size changes are the user's and are remembered
+    applyTarget();
     showView (processor.view());
 
     // Standalone: "Audio Dynamics Analyzer.exe song.flac" (also Explorer's "Open with") analyses the file
@@ -528,6 +539,9 @@ void AdaAudioProcessorEditor::updateFromHistory()
         readouts[plr]->setValue (f.truePeakMaxDBTP - f.integratedLUFS);
         meter.setValues (measured ? std::optional<float> (f.psr) : std::nullopt, stats.min, stats.p10);
     }
+    auto finite = [] (float v) { return std::isfinite (v) ? std::optional<double> (v) : std::nullopt; };
+    showTargetMeasurement (store.empty() ? std::nullopt : finite (store.latest().integratedLUFS),
+                           store.empty() ? std::nullopt : finite (store.latest().truePeakMaxDBTP));
     zoneBar.setStats (stats);
     graph.repaint();
 }
@@ -591,6 +605,7 @@ void AdaAudioProcessorEditor::updateFromFile()
         readouts[truePeakMax]->setValue (value (s.truePeakMax));
         readouts[plr]->setValue (value (s.plr));
         meter.setValues (toFloat (s.psrMean), toFloat (s.psrMin), toFloat (s.psrP10));
+        showTargetMeasurement (s.integrated, s.truePeakMax);
 
         ada::HistoryStore::PsrStats stats;
         stats.measuredFrames = s.measuredFrames;
@@ -605,6 +620,7 @@ void AdaAudioProcessorEditor::updateFromFile()
         // while analysing: the graph fills up; numbers appear when the whole file is measured
         for (auto& r : readouts)
             r->setValue (nan);
+        showTargetMeasurement (std::nullopt, std::nullopt);
         if (fa.store() != nullptr && fa.state() == State::running)
         {
             const auto stats = fa.store()->psrStats();
@@ -709,6 +725,61 @@ void AdaAudioProcessorEditor::timerCallback()
     }
     fileModeButton.setEnabled (processor.fileAnalysis().state() != ada::FileAnalysis::State::idle);
     updateWindowTitle();
+    if (processor.targetRevision() != shownTargetRevision) // e.g. the host restored a preset
+        applyTarget();
+}
+
+void AdaAudioProcessorEditor::applyTarget()
+{
+    shownTargetRevision = processor.targetRevision();
+    targetPanel.setSelection (processor.targetIndex(), processor.currentTarget());
+    if (fileModeShown)
+        updateFromFile();
+    else
+        updateFromHistory();
+}
+
+void AdaAudioProcessorEditor::showTargetMeasurement (std::optional<double> integrated, std::optional<double> truePeakMax)
+{
+    targetPanel.setMeasurement (integrated, truePeakMax);
+    const auto target = processor.currentTarget();
+    const auto verdict = targetPanel.verdict();
+    graph.setTargetLines (target ? std::optional<float> ((float) target->loudness) : std::nullopt,
+                          verdict ? std::optional<float> ((float) verdict->ceiling) : std::nullopt);
+}
+
+void AdaAudioProcessorEditor::editCustomTarget()
+{
+    const auto [loudness, ceiling] = processor.customTarget();
+    // owned by the editor (not deleted when dismissed), so closing the plugin window also closes it
+    customDialog = std::make_unique<juce::AlertWindow> ("Custom delivery target",
+                                                        "Integrated loudness target (-40 to 0 LUFS) and true-peak ceiling (-10 to 0 dBTP).",
+                                                        juce::MessageBoxIconType::NoIcon, this);
+    auto* window = customDialog.get();
+    window->addTextEditor ("loudness", juce::String (loudness, 1), "Target loudness (LUFS)");
+    window->addTextEditor ("ceiling", juce::String (ceiling, 1), "True-peak ceiling (dBTP)");
+    window->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    window->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    window->enterModalState (true, juce::ModalCallbackFunction::create (
+        [safeThis = juce::Component::SafePointer<AdaAudioProcessorEditor> (this), window] (int result) {
+            if (safeThis == nullptr)
+                return;
+            // a number, with a comma accepted as the decimal separator; anything else keeps the old value
+            auto parse = [window] (const juce::String& field) -> std::optional<float> {
+                const auto text = window->getTextEditorContents (field).trim().replaceCharacter (',', '.');
+                if (text.isEmpty() || ! text.containsOnly ("+-.0123456789") || ! text.containsAnyOf ("0123456789"))
+                    return std::nullopt;
+                return text.getFloatValue();
+            };
+            if (result == 1)
+            {
+                const auto [oldLoudness, oldCeiling] = safeThis->processor.customTarget();
+                safeThis->processor.setCustomTarget (parse ("loudness").value_or (oldLoudness),
+                                                     parse ("ceiling").value_or (oldCeiling));
+                safeThis->processor.setTargetIndex (ada::customTargetIndex);
+            }
+            safeThis->applyTarget(); // also restores the selector after Cancel
+        }), false);
 }
 
 void AdaAudioProcessorEditor::updateWindowTitle()
@@ -789,7 +860,8 @@ void AdaAudioProcessorEditor::resized()
         processor.saveEditorSize (getWidth(), getHeight());
 
     const bool visible = contentVisible();
-    for (juce::Component* c : { (juce::Component*) &graph, (juce::Component*) &meter, (juce::Component*) &zoneBar })
+    for (juce::Component* c : { (juce::Component*) &graph, (juce::Component*) &meter, (juce::Component*) &zoneBar,
+                                (juce::Component*) &targetPanel })
         c->setVisible (visible);
     for (auto& r : readouts)
         r->setVisible (visible);
@@ -836,7 +908,11 @@ void AdaAudioProcessorEditor::resized()
         readouts[(size_t) i]->setBounds (strip.getX() + i * (cellW + 4), strip.getY(), cellW, strip.getHeight());
     area.removeFromTop (gap);
 
-    zoneBar.setBounds (area.removeFromBottom (zoneBarHeight));
+    // the target panel sits in the corner under the PSR meter; the zone bar spans the graph's width
+    auto bottom = area.removeFromBottom (zoneBarHeight);
+    targetPanel.setBounds (bottom.removeFromRight (meterWidth));
+    bottom.removeFromRight (gap);
+    zoneBar.setBounds (bottom);
     area.removeFromBottom (gap);
     meter.setBounds (area.removeFromRight (meterWidth));
     area.removeFromRight (gap);

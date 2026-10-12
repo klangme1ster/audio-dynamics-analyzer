@@ -20,6 +20,8 @@ public:
     void showAll();
     // Replaces the "Live, last ..." text in the header (empty = default).
     void setStatusText (const juce::String& text);
+    // Dashed reference lines in the level panel: delivery loudness target and true-peak ceiling
+    void setTargetLines (std::optional<float> loudness, std::optional<float> ceiling);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -55,6 +57,7 @@ private:
 
     const ada::HistoryStore* store;
     juce::String statusText;
+    std::optional<float> targetLoudness, targetCeiling;
     juce::Rectangle<float> header, levelArea, psrArea, axisArea;
     double span = 60.0;
     bool followLive = true;

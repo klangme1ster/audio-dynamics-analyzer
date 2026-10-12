@@ -181,7 +181,199 @@ void ZoneBar::paint (juce::Graphics& g)
                                      ? theme::number (stats.zonePercent[(size_t) z], 0) + " %"
                                      : theme::dash();
         g.setColour (theme::textSecondary);
-        g.drawText (" " + juce::String (theme::zoneNames[z]) + " " + theme::zoneRange (z) + ":  " + pct, cell,
-                    juce::Justification::centredLeft);
+        // narrow: leave out the ranges (they are on the PSR axis and in the tooltips)
+        const auto range = cellW >= 150.0f ? " " + theme::zoneRange (z) : juce::String();
+        g.drawText (" " + juce::String (theme::zoneNames[z]) + range + ":  " + pct, cell,
+                    juce::Justification::centredLeft, true);
     }
+}
+
+// --- TargetPanel -----------------------------------------------------------------------------
+
+namespace
+{
+void drawStatusIcon (juce::Graphics& g, juce::Rectangle<float> r, ada::TargetStatus status)
+{
+    using S = ada::TargetStatus;
+    const auto colour = status == S::ok ? theme::zoneColours[0]
+                      : status == S::warning ? theme::zoneColours[1]
+                      : status == S::problem ? theme::zoneColours[3]
+                                             : theme::grid;
+    g.setColour (colour);
+    g.fillEllipse (r);
+    g.setColour (theme::background);
+    const auto c = r.getCentre();
+    const float s = r.getWidth() * 0.22f;
+    juce::Path p;
+    if (status == S::ok)
+    {
+        p.startNewSubPath (c.x - s * 1.2f, c.y);
+        p.lineTo (c.x - s * 0.3f, c.y + s);
+        p.lineTo (c.x + s * 1.3f, c.y - s);
+        g.strokePath (p, juce::PathStrokeType (1.8f));
+    }
+    else if (status == S::problem)
+    {
+        g.drawLine (c.x - s, c.y - s, c.x + s, c.y + s, 1.8f);
+        g.drawLine (c.x - s, c.y + s, c.x + s, c.y - s, 1.8f);
+    }
+    else if (status == S::warning)
+    {
+        g.fillRect (c.x - 0.9f, c.y - s * 1.4f, 1.8f, s * 1.8f);
+        g.fillRect (c.x - 0.9f, c.y + s * 0.8f, 1.8f, 1.8f);
+    }
+    else
+        g.fillRect (c.x - s, c.y - 0.9f, s * 2.0f, 1.8f);
+}
+
+juce::String db (double v) { return theme::number ((float) v); }
+} // namespace
+
+TargetPanel::TargetPanel()
+{
+    box.addItem ("No delivery target", 1);
+    for (size_t i = 0; i < ada::deliveryTargets.size(); ++i)
+        box.addItem (ada::deliveryTargets[i].name, (int) i + 2);
+    box.addSeparator();
+    box.addItem ("Edit custom target...", editCustomId); // always opens the dialog, even when Custom is selected
+    box.onChange = [this] {
+        if (onSelect)
+            onSelect (box.getSelectedId() == editCustomId ? ada::customTargetIndex : box.getSelectedId() - 2);
+    };
+    box.setTooltip ("Choose where the track is going. Streaming services turn louder tracks down to their target;\n"
+                    "broadcast requires the target within a tolerance. Custom lets you enter your own values.");
+    addAndMakeVisible (box);
+    updateTooltip();
+}
+
+void TargetPanel::setSelection (int index, const std::optional<ada::DeliveryTarget>& t)
+{
+    target = t;
+    if (index == ada::customTargetIndex && t)
+        box.changeItemText (ada::customTargetIndex + 2, "Custom (" + db (t->loudness) + " LUFS, " + db (t->peakCeiling) + " dBTP)");
+    box.setSelectedId (index + 2, juce::dontSendNotification);
+    updateTooltip();
+    repaint();
+}
+
+void TargetPanel::setMeasurement (std::optional<double> i, std::optional<double> tp)
+{
+    // judge the values as displayed (0.1 dB), so the verdict never contradicts the readouts
+    auto round = [] (std::optional<double> v) { return v ? std::optional<double> (std::round (*v * 10.0) / 10.0 + 0.0) : v; };
+    i = round (i);
+    tp = round (tp);
+    if (i == integrated && tp == truePeakMax)
+        return;
+    integrated = i;
+    truePeakMax = tp;
+    updateTooltip();
+    repaint();
+}
+
+std::optional<ada::TargetVerdict> TargetPanel::verdict() const
+{
+    if (! target)
+        return std::nullopt;
+    return ada::evaluateTarget (*target, integrated, truePeakMax);
+}
+
+juce::String TargetPanel::loudnessText (const ada::TargetVerdict& v) const
+{
+    if (v.loudness == ada::TargetStatus::unknown)
+        return "Integrated loudness: not measured yet";
+    const auto& t = *target;
+    const auto value = db (*integrated) + " LUFS";
+    const auto delta = theme::number ((float) std::abs (v.loudnessDelta));
+    if (t.kind == ada::DeliveryTarget::Kind::broadcast)
+        return value + (v.loudness == ada::TargetStatus::ok ? ": within " : ": outside ") + juce::String (juce::CharPointer_UTF8 ("\xc2\xb1"))
+               + theme::number ((float) t.tolerance) + " LU of " + db (t.loudness);
+    if (v.loudness == ada::TargetStatus::ok)
+        return value + ": on target (" + db (t.loudness) + ")";
+    if (v.loudnessDelta > 0.0)
+        return value + ": " + delta + " LU louder than " + db (t.loudness) + ", will be turned down by " + delta + " dB";
+    return value + ": " + delta + " LU quieter than " + db (t.loudness) + ", plays quieter than other tracks";
+}
+
+juce::String TargetPanel::peakText (const ada::TargetVerdict& v) const
+{
+    if (v.peak == ada::TargetStatus::unknown)
+        return "Max true peak: not measured yet";
+    const auto value = db (*truePeakMax) + " dBTP";
+    const auto ceiling = db (v.ceiling) + " dBTP";
+    const bool stricter = target->loudMasterCeiling && v.ceiling == *target->loudMasterCeiling;
+    const auto note = stricter ? juce::String (" (stricter for masters louder than ") + db (target->loudness) + ")" : juce::String();
+    if (v.peak == ada::TargetStatus::ok)
+        return value + ": below the " + ceiling + " ceiling" + note;
+    const auto over = theme::number ((float) -v.peakMargin);
+    if (*truePeakMax > 0.0)
+        return value + ": above 0 dBTP, clips after encoding (ceiling " + ceiling + ")";
+    return value + ": " + over + " dB above the " + ceiling + " ceiling" + note;
+}
+
+void TargetPanel::paint (juce::Graphics& g)
+{
+    g.fillAll (theme::panel);
+    auto r = getLocalBounds().toFloat().reduced (8.0f, 5.0f);
+    r.removeFromTop (22.0f); // selector row
+    r.removeFromTop (3.0f);
+
+    const auto v = verdict();
+    g.setFont (juce::FontOptions (12.0f));
+    if (! v)
+    {
+        g.setColour (theme::textMuted);
+        g.drawFittedText ("Choose a delivery target", r.removeFromTop (17.0f).toNearestInt(),
+                          juce::Justification::centredLeft, 1, 0.8f);
+        return;
+    }
+    // compact lines for the corner; the full sentences are in the tooltip
+    const std::pair<ada::TargetStatus, juce::String> lines[] = { { v->loudness, shortLoudnessText (*v) },
+                                                                  { v->peak, shortPeakText (*v) } };
+    for (const auto& [status, text] : lines)
+    {
+        auto row = r.removeFromTop (17.0f);
+        drawStatusIcon (g, row.removeFromLeft (13.0f).withSizeKeepingCentre (13.0f, 13.0f), status);
+        row.removeFromLeft (5.0f);
+        g.setColour (theme::textSecondary);
+        g.drawFittedText (text, row.toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
+        r.removeFromTop (1.0f);
+    }
+}
+
+void TargetPanel::resized()
+{
+    box.setBounds (getLocalBounds().reduced (8, 5).removeFromTop (22));
+}
+
+juce::String TargetPanel::shortLoudnessText (const ada::TargetVerdict& v) const
+{
+    if (v.loudness == ada::TargetStatus::unknown)
+        return "Loudness: " + theme::dash();
+    const auto delta = theme::number ((float) std::abs (v.loudnessDelta));
+    if (target->kind == ada::DeliveryTarget::Kind::broadcast)
+        return juce::String ("Loudness: ") + (v.loudness == ada::TargetStatus::ok ? "in range" : "out of range");
+    if (v.loudness == ada::TargetStatus::ok)
+        return "Loudness: on target";
+    return "Loudness: " + delta + (v.loudnessDelta > 0.0 ? " LU too loud" : " LU too quiet");
+}
+
+juce::String TargetPanel::shortPeakText (const ada::TargetVerdict& v) const
+{
+    if (v.peak == ada::TargetStatus::unknown)
+        return "Peak: " + theme::dash();
+    if (v.peak == ada::TargetStatus::ok)
+        return "Peak: below " + db (v.ceiling) + " dBTP";
+    if (*truePeakMax > 0.0)
+        return "Peak: clips (above 0 dBTP)";
+    return "Peak: " + theme::number ((float) -v.peakMargin) + " dB too high";
+}
+
+void TargetPanel::updateTooltip()
+{
+    juce::String text = "Checks the integrated loudness and the max true peak against the chosen delivery target.\n"
+                        "Platform figures change over time: Spotify's and the broadcast values are published,\n"
+                        "the others are widely reported measurements.";
+    if (const auto v = verdict())
+        text = loudnessText (*v) + "\n" + peakText (*v) + "\n\n" + text;
+    setTooltip (text);
 }

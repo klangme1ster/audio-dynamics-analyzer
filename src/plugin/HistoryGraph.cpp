@@ -30,6 +30,15 @@ void HistoryGraph::showAll()
     repaint();
 }
 
+void HistoryGraph::setTargetLines (std::optional<float> loudness, std::optional<float> ceiling)
+{
+    if (loudness == targetLoudness && ceiling == targetCeiling)
+        return;
+    targetLoudness = loudness;
+    targetCeiling = ceiling;
+    repaint();
+}
+
 void HistoryGraph::setStatusText (const juce::String& text)
 {
     if (text == statusText)
@@ -232,6 +241,13 @@ void HistoryGraph::paint (juce::Graphics& g)
                     dataMax = std::max (dataMax, value);
                 }
     }
+    // keep the delivery target lines in view
+    for (const auto& line : { targetLoudness, targetCeiling })
+        if (line && dataMin <= dataMax)
+        {
+            dataMin = std::min (dataMin, *line);
+            dataMax = std::max (dataMax, *line);
+        }
     float lo = -40.0f, hi = 0.0f;
     if (dataMin <= dataMax)
     {
@@ -284,6 +300,32 @@ void HistoryGraph::paint (juce::Graphics& g)
     g.restoreState();
 
     drawTimeAxis (g, v);
+
+    // delivery target lines (dashed, labelled at the right end)
+    const float dashes[] = { 6.0f, 4.0f };
+    auto lineY = [&] (std::optional<float> value) -> std::optional<float> {
+        if (! value || ! std::isfinite (*value) || *value < lo || *value > hi)
+            return std::nullopt;
+        return levelArea.getBottom() - (*value - lo) / (hi - lo) * levelArea.getHeight();
+    };
+    auto targetLine = [&] (std::optional<float> y, juce::Colour colour, const juce::String& label, bool labelBelow) {
+        if (! y)
+            return;
+        g.setColour (colour.withAlpha (0.8f));
+        g.drawDashedLine (juce::Line<float> (levelArea.getX(), *y, levelArea.getRight(), *y), dashes, 2, 1.0f);
+        g.setFont (juce::FontOptions (11.0f));
+        g.drawText (label, juce::Rectangle<float> (levelArea.getRight() - 160.0f, labelBelow ? *y + 1.0f : *y - 15.0f, 156.0f, 14.0f),
+                    juce::Justification::centredRight);
+    };
+    const auto loudnessY = lineY (targetLoudness), ceilingY = lineY (targetCeiling);
+    // labels sit above their lines; when the lines are close, the lower line's label goes below it
+    const bool close = loudnessY && ceilingY && std::abs (*loudnessY - *ceilingY) < 15.0f;
+    if (loudnessY)
+        targetLine (loudnessY, theme::shortTerm, "target " + theme::number (*targetLoudness) + " LUFS",
+                    close && *loudnessY >= *ceilingY);
+    if (ceilingY)
+        targetLine (ceilingY, theme::truePeak, "ceiling " + theme::number (*targetCeiling) + " dBTP",
+                    close && *ceilingY > *loudnessY);
 
     drawSeries (g, levelArea, v, lo, hi, [] (const ada::DynamicsMetrics& f) { return f.truePeak3sDBTP; },
                 theme::truePeak, 1.5f);

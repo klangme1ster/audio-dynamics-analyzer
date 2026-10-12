@@ -1,9 +1,11 @@
 #pragma once
 
+#include "DeliveryTargets.h"
 #include "HistoryStore.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <functional>
 #include <optional>
 
 // Vertical PSR meter (plan 4.3): current PSR as a bar coloured by its zone, with markers for the
@@ -35,4 +37,33 @@ public:
 private:
     ada::HistoryStore::PsrStats stats;
     juce::String title { "Time in each PSR zone since reset" };
+};
+
+// Delivery target check (plan 4.5): a target selector and two verdict lines (loudness, true peak),
+// each with an icon and text so the status never depends on colour alone.
+class TargetPanel : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    TargetPanel();
+
+    std::function<void (int)> onSelect; // -1 = no target, else an index into ada::deliveryTargets
+
+    void setSelection (int index, const std::optional<ada::DeliveryTarget>& target);
+    void setMeasurement (std::optional<double> integrated, std::optional<double> truePeakMax);
+    std::optional<ada::TargetVerdict> verdict() const;
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    juce::String loudnessText (const ada::TargetVerdict&) const;
+    juce::String peakText (const ada::TargetVerdict&) const;
+    juce::String shortLoudnessText (const ada::TargetVerdict&) const;
+    juce::String shortPeakText (const ada::TargetVerdict&) const;
+    void updateTooltip();
+
+    juce::ComboBox box;
+    static constexpr int editCustomId = 1000; // "Edit custom target..." item
+    std::optional<ada::DeliveryTarget> target;
+    std::optional<double> integrated, truePeakMax;
 };

@@ -3,6 +3,7 @@
 #include "PluginEditor.h"
 
 #include <array>
+#include <cmath>
 
 AdaAudioProcessor::AdaAudioProcessor()
     : AudioProcessor (BusesProperties()
@@ -160,6 +161,36 @@ ada::OutputMonitor* AdaAudioProcessor::outputMonitor()
     return output.get();
 }
 
+std::optional<ada::DeliveryTarget> AdaAudioProcessor::currentTarget() const noexcept
+{
+    const int index = deliveryTarget.load();
+    if (index < 0 || index >= (int) ada::deliveryTargets.size())
+        return std::nullopt;
+    auto target = ada::deliveryTargets[(size_t) index];
+    if (index == ada::customTargetIndex)
+    {
+        target.loudness = customLoudness.load();
+        target.peakCeiling = customCeiling.load();
+    }
+    return target;
+}
+
+void AdaAudioProcessor::setTargetIndex (int index) noexcept
+{
+    deliveryTarget.store (index >= 0 && index < (int) ada::deliveryTargets.size() ? index : -1);
+    ++targetChanges;
+}
+
+void AdaAudioProcessor::setCustomTarget (float loudness, float ceiling) noexcept
+{
+    auto sanitise = [] (float v, float lo, float hi, float fallback) {
+        return std::isfinite (v) ? juce::jlimit (lo, hi, v) + 0.0f : fallback; // + 0.0f turns -0 into 0
+    };
+    customLoudness.store (sanitise (loudness, -40.0f, 0.0f, -14.0f));
+    customCeiling.store (sanitise (ceiling, -10.0f, 0.0f, -1.0f));
+    ++targetChanges;
+}
+
 juce::Point<int> AdaAudioProcessor::savedEditorSize() const
 {
     return { editorWidth.load(), editorHeight.load() };
@@ -182,6 +213,12 @@ void AdaAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     auto state = parameters.copyState();
     state.setProperty ("editorWidth", editorWidth.load(), nullptr);
     state.setProperty ("editorHeight", editorHeight.load(), nullptr);
+    // saved by name, so reordering or extending the presets does not remap saved projects
+    const int target = deliveryTarget.load();
+    state.setProperty ("deliveryTarget", target >= 0 ? juce::String (ada::deliveryTargets[(size_t) target].name)
+                                                     : juce::String(), nullptr);
+    state.setProperty ("customLoudness", customLoudness.load(), nullptr);
+    state.setProperty ("customCeiling", customCeiling.load(), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -193,6 +230,14 @@ void AdaAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
         {
             editorWidth.store (xml->getIntAttribute ("editorWidth", 0));
             editorHeight.store (xml->getIntAttribute ("editorHeight", 0));
+            const auto targetName = xml->getStringAttribute ("deliveryTarget");
+            int target = -1;
+            for (size_t i = 0; i < ada::deliveryTargets.size(); ++i)
+                if (targetName == ada::deliveryTargets[i].name)
+                    target = (int) i;
+            setCustomTarget ((float) xml->getDoubleAttribute ("customLoudness", -14.0),
+                             (float) xml->getDoubleAttribute ("customCeiling", -1.0));
+            setTargetIndex (target);
             parameters.replaceState (juce::ValueTree::fromXml (*xml));
         }
 }

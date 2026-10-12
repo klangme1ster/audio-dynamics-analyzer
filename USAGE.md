@@ -176,6 +176,23 @@ Compare a mix with good references in the same genre rather than chasing a singl
 
 **Live analysis** (switch at the top, live view): turns measuring of the input on and off. When off, the display keeps the last values and shows "Live analysis stopped"; nothing is measured.
 
+**Delivery target** (corner under the PSR meter). Choose where the track is going and ADA checks it in every view (live, output and file):
+
+| Target | Loudness | True-peak ceiling | Verdict |
+|---|---|---|---|
+| Spotify | −14 LUFS (±1 LU counts as on target) | −1 dBTP; −2 dBTP for masters louder than −14 LUFS | Louder: "will be turned down by X dB"; quieter: "plays quieter than other tracks" |
+| Apple Music | −16 LUFS | −1 dBTP | as above |
+| YouTube | −14 LUFS | −1 dBTP | as above |
+| Tidal | −14 LUFS | −1 dBTP | as above |
+| EBU R 128 broadcast | −23 LUFS ±0.5 LU | −1 dBTP | Outside the tolerance or above the ceiling is a problem |
+| ATSC A/85 (US TV) | −24 LKFS ±2 dB | −2 dBTP | as above |
+| Custom | your value (−40 to 0 LUFS) | your value (−10 to 0 dBTP) | like streaming; **Edit custom target...** in the list changes the values |
+
+* Each verdict has an icon (✓ on target, ! warning, ✕ problem) and a short line, e.g. "Loudness: 5.4 LU too loud" or "Peak: 0.7 dB too high". Hover over the box for the full sentences, e.g. "−8.6 LUFS: 5.4 LU louder than −14.0, will be turned down by 5.4 dB". Peaks above 0 dBTP are flagged as clipping after encoding. The check uses the values as displayed (rounded to 0.1), so a −1.0 dBTP readout passes a −1 dBTP ceiling.
+* The history graph shows the loudness target and the ceiling that applies as dashed lines.
+* The choice (and custom values) is saved with the plugin or the standalone app, and follows when the host restores a preset.
+* Platform figures change over time. Only Spotify's figures and the broadcast standards are published by their owners; the others are widely reported measurements (see [What good values look like](#what-good-values-look-like)).
+
 **Window size.** The window remembers its size: the standalone app between sessions, the plugin inside a DAW with the project.
 
 **Standalone app.**

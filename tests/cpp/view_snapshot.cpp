@@ -62,24 +62,37 @@ public:
         addAndMakeVisible (graph);
         addAndMakeVisible (meter);
         addAndMakeVisible (zoneBar);
+        addAndMakeVisible (targetPanel);
         const auto stats = s.psrStats();
         const auto& f = s.latest();
         meter.setValues (ada::passesLivePsrGate (f) ? std::optional<float> (f.psr) : std::nullopt, stats.min, stats.p10);
         zoneBar.setStats (stats);
+
+        // delivery target: Spotify, measured against the song's integrated loudness and max true peak
+        const auto& spotify = ada::deliveryTargets[0];
+        targetPanel.setSelection (0, spotify);
+        auto finite = [] (float v) { return std::isfinite (v) ? std::optional<double> (v) : std::nullopt; };
+        targetPanel.setMeasurement (finite (f.integratedLUFS), finite (f.truePeakMaxDBTP));
+        const auto verdict = targetPanel.verdict();
+        graph.setTargetLines ((float) spotify.loudness, verdict ? std::optional<float> ((float) verdict->ceiling) : std::nullopt);
     }
     void paint (juce::Graphics& g) override { g.fillAll (theme::background); }
     void resized() override
     {
         auto area = getLocalBounds().reduced (8);
-        zoneBar.setBounds (area.removeFromBottom (62));
+        auto bottom = area.removeFromBottom (72);
+        targetPanel.setBounds (bottom.removeFromRight (170));
+        bottom.removeFromRight (8);
+        zoneBar.setBounds (bottom);
         area.removeFromBottom (8);
-        meter.setBounds (area.removeFromRight (130));
+        meter.setBounds (area.removeFromRight (170));
         area.removeFromRight (8);
         graph.setBounds (area);
     }
     HistoryGraph graph;
     PsrMeter meter;
     ZoneBar zoneBar;
+    TargetPanel targetPanel;
 };
 } // namespace
 

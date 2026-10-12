@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DeliveryTargets.h"
 #include "DynamicsEngine.h"
 #include "FileAnalysis.h"
 #include "MetricsFifo.h"
@@ -75,6 +76,19 @@ public:
     void setMonitorInput (bool on) noexcept { monitor.store (on); }
     bool isMonitoringInput() const noexcept { return monitor.load(); }
 
+    // Delivery target (plan 4.5): -1 = none, else an index into ada::deliveryTargets; saved with the state
+    int targetIndex() const noexcept { return deliveryTarget.load(); }
+    // Out-of-range indices (e.g. a state saved by a newer version) select no target
+    void setTargetIndex (int index) noexcept;
+    // The selected target with custom values applied, or nullopt for none
+    std::optional<ada::DeliveryTarget> currentTarget() const noexcept;
+    std::pair<float, float> customTarget() const noexcept { return { customLoudness.load(), customCeiling.load() }; }
+    // Clamped to -40..0 LUFS and -10..0 dBTP; non-finite values fall back to the defaults
+    void setCustomTarget (float loudness, float ceiling) noexcept;
+    // Bumped whenever the selection or the custom values change (also by a state restore), so an
+    // open editor can follow
+    int targetRevision() const noexcept { return targetChanges.load(); }
+
     // Editor size, stored with the plugin state so it is restored next time (message thread)
     juce::Point<int> savedEditorSize() const;
     void saveEditorSize (int width, int height);
@@ -104,7 +118,8 @@ private:
     std::atomic<std::int64_t> restartFrom { -1 }, restartTo { -1 };
     std::atomic<std::uint32_t> restartCount { 0 };
     std::atomic<bool> frozen { false }, liveStopped { false };
-    std::atomic<int> editorWidth { 0 }, editorHeight { 0 };
+    std::atomic<int> editorWidth { 0 }, editorHeight { 0 }, deliveryTarget { -1 }, targetChanges { 0 };
+    std::atomic<float> customLoudness { -14.0f }, customCeiling { -1.0f };
     std::atomic<bool> monitor { false }; // standalone: play input to output; never saved, off at start
     std::atomic<float>* resetOnPlay = nullptr;
     std::atomic<float>* freezeWhenStopped = nullptr;

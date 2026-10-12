@@ -61,6 +61,9 @@ private:
     void analyseFile (const juce::File& file);
     void openFileChooser();
     void updateWindowTitle();
+    void applyTarget();
+    void showTargetMeasurement (std::optional<double> integrated, std::optional<double> truePeakMax);
+    void editCustomTarget();
     bool contentVisible() const noexcept { return processor.view() != AdaAudioProcessor::View::live || activeShown; }
 
     AdaAudioProcessor& processor;
@@ -79,6 +82,9 @@ private:
     HistoryGraph graph;
     PsrMeter meter;
     ZoneBar zoneBar;
+    TargetPanel targetPanel;
+    int shownTargetRevision = -1;
+    std::unique_ptr<juce::AlertWindow> customDialog; // owned, so it closes with the editor
     juce::TextButton resetButton { "Reset" };
     juce::ToggleButton resetOnPlayToggle { "New measurement when playback jumps" };
     juce::ToggleButton freezeToggle { "Freeze while stopped" };
