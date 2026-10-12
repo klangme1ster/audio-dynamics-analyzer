@@ -514,9 +514,8 @@ private:
         return decoder != nullptr && (double) f.sampleRate == sampleRate && f.channels == numChannels;
     }
 
-    // Replaces `pending` with the next decoded block. The first block's timestamp places the
-    // stream on the file's time line: samples before 0 (encoder priming, when the container marks
-    // it) are dropped.
+    // Replaces `pending` with the next decoded block. Blocks are placed by counting samples from
+    // the stream's start; the container's encoder priming is dropped at the beginning.
     bool decodeNext()
     {
         DWORD flags = 0;
@@ -561,9 +560,10 @@ private:
         if (firstSample)
         {
             firstSample = false;
-            // a stream that starts later than 0 (e.g. cut from a longer one) is read from its first
-            // sample: positions never lie ahead of what was decoded, so no read waits forever
-            pendingStart = nextStart = std::min<juce::int64> (0, toFrames (timestamp, sampleRate) - priming);
+            // The first decoded sample is the stream's first sample, priming included. Its timestamp
+            // is not used: Windows versions differ (Windows 11 stamps the first AAC frame 0, Windows
+            // Server 2022 stamps the same frame +1024 samples), while the samples are the same.
+            pendingStart = nextStart = -priming;
         }
         const auto frames = (juce::int64) (floats / numChannels);
         nextStart = pendingStart + frames;
