@@ -18,16 +18,18 @@ inline bool passesLivePsrGate (const DynamicsMetrics& f) noexcept
            && std::isfinite (f.psr);
 }
 
-// UI-side history of one measurement (spec 4): a fixed ring of the last 90 minutes of frames plus
+// UI-side history of one measurement (spec 4): a fixed ring of frames (live: the last 90 minutes) plus
 // PSR statistics since the last reset. Single-threaded (message thread); allocates only in the
 // constructor.
 class HistoryStore
 {
 public:
-    static constexpr int capacity = 54000; // 90 min at 10 frames/s
+    static constexpr int liveCapacity = 54000; // 90 min at 10 frames/s
     static constexpr double psrBinWidth = 0.1, psrHistogramMin = -20.0, psrHistogramMax = 60.0;
 
-    HistoryStore();
+    explicit HistoryStore (int capacity = liveCapacity);
+
+    int capacity() const noexcept { return ringCapacity; }
 
     // Adds a frame. A frame from a new epoch (reset or re-prepare) starts a new history.
     void push (const DynamicsMetrics& frame);
@@ -61,6 +63,7 @@ private:
     void clear();
 
     std::vector<DynamicsMetrics> ring;
+    int ringCapacity;
     int head = 0, count = 0; // head = index of the oldest frame
     std::optional<std::uint32_t> epoch, ignoredEpoch;
     std::uint64_t changeCount = 0, measurementCount = 0;

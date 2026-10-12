@@ -14,6 +14,7 @@ juce_add_plugin(AudioDynamicsAnalyzer
 
 target_sources(AudioDynamicsAnalyzer PRIVATE
     DynamicsViews.cpp
+    FileAnalysis.cpp
     HistoryGraph.cpp
     PluginEditor.cpp
     PluginProcessor.cpp)
@@ -48,3 +49,24 @@ target_link_libraries(ada_view_snapshot PRIVATE
     juce::juce_gui_basics
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
+
+# File analysis tests (JUCE readers + engine), registered with CTest
+if(ADA_BUILD_TESTS)
+    FetchContent_GetProperties(doctest)
+    juce_add_console_app(ada_file_analysis_tests PRODUCT_NAME "ada_file_analysis_tests")
+    target_sources(ada_file_analysis_tests PRIVATE
+        ${PROJECT_SOURCE_DIR}/tests/cpp/test_file_analysis.cpp
+        FileAnalysis.cpp)
+    target_include_directories(ada_file_analysis_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/cpp)
+    target_include_directories(ada_file_analysis_tests SYSTEM PRIVATE ${doctest_SOURCE_DIR})
+    target_compile_definitions(ada_file_analysis_tests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+        JUCE_USE_MP3AUDIOFORMAT=1 JUCE_USE_WINDOWS_MEDIA_FORMAT=1)
+    target_link_libraries(ada_file_analysis_tests PRIVATE
+        ada_engine
+        juce::juce_audio_formats
+        juce::juce_events
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
+    add_test(NAME ada_file_analysis_tests COMMAND ada_file_analysis_tests)
+endif()

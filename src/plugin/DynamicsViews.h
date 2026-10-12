@@ -13,10 +13,13 @@ class PsrMeter : public juce::Component, public juce::SettableTooltipClient
 public:
     PsrMeter();
     void setValues (std::optional<float> current, std::optional<float> minimum, std::optional<float> p10);
+    void setTitle (const juce::String& newTitle);
+    void restoreDefaultTooltip();
     void paint (juce::Graphics&) override;
 
 private:
     std::optional<float> current, minimum, p10;
+    juce::String title { "PSR now (dB)" };
 };
 
 // Stacked bar (plan 4.4): share of the measured time spent in each PSR zone since reset.
@@ -25,8 +28,11 @@ class ZoneBar : public juce::Component, public juce::SettableTooltipClient
 public:
     ZoneBar();
     void setStats (const ada::HistoryStore::PsrStats& stats);
+    void setTitle (const juce::String& newTitle);
+    void restoreDefaultTooltip();
     void paint (juce::Graphics&) override;
 
 private:
     ada::HistoryStore::PsrStats stats;
+    juce::String title { "Time in each PSR zone since reset" };
 };

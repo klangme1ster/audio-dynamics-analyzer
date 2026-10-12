@@ -1,0 +1,167 @@
+// File analysis through JUCE's audio readers (plan 3.6): decoding, block handling and the per-file
+// summary must give the same result as feeding the samples to the engine directly.
+#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#include <doctest/doctest.h>
+
+#include "FileAnalysis.h"
+#include "Summary.h"
+#include "TestSupport.h"
+
+#include <juce_audio_formats/juce_audio_formats.h>
+
+#include <cmath>
+#include <cstring>
+#include <memory>
+
+// TestSupport.h declares these for the allocation test; this executable does not count.
+namespace adatest
+{
+thread_local bool countAllocations = false;
+std::atomic<long> allocationCount { 0 };
+}
+
+using namespace adatest;
+
+namespace
+{
+juce::File tempDir()
+{
+    auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("ada_file_analysis_tests");
+    dir.createDirectory();
+    return dir;
+}
+
+void writeFile (const juce::File& file, juce::AudioFormat& format, const Signal& s, int bits)
+{
+    file.deleteFile();
+    std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (file);
+    const auto options = juce::AudioFormatWriterOptions{}
+                             .withSampleRate (s.fs)
+                             .withNumChannels ((int) s.channels.size())
+                             .withBitsPerSample (bits);
+    auto writer = format.createWriterFor (stream, options); // takes ownership of the stream
+    REQUIRE (writer != nullptr);
+    REQUIRE (writer->writeFromFloatArrays (s.pointers().data(), (int) s.channels.size(), (int) s.frames()));
+}
+
+Run analyseFile (const juce::File& file)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+    REQUIRE (reader != nullptr);
+    CollectingSink sink;
+    const auto final = ada::FileAnalysis::analyseReader (*reader, sink, [] { return false; });
+    REQUIRE (final.has_value());
+    Run r;
+    r.final = *final;
+    r.frames = std::move (sink.frames);
+    r.summary = ada::summarize (r.frames, r.final);
+    return r;
+}
+
+// Re-reads the written file into memory so both paths see identical (quantised) samples.
+Signal readBack (const juce::File& file)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+    REQUIRE (reader != nullptr);
+    Signal s { reader->sampleRate, std::vector<std::vector<float>> (reader->numChannels,
+                                                                    std::vector<float> ((size_t) reader->lengthInSamples)) };
+    juce::AudioBuffer<float> buffer ((int) reader->numChannels, (int) reader->lengthInSamples);
+    reader->read (&buffer, 0, (int) reader->lengthInSamples, 0, true, true);
+    for (int ch = 0; ch < (int) reader->numChannels; ++ch)
+        std::memcpy (s.channels[(size_t) ch].data(), buffer.getReadPointer (ch), sizeof (float) * s.frames());
+    return s;
+}
+
+bool sameFrames (const std::vector<ada::DynamicsMetrics>& a, const std::vector<ada::DynamicsMetrics>& b)
+{
+    if (a.size() != b.size())
+        return false;
+    for (size_t i = 0; i < a.size(); ++i)
+        if (std::memcmp (&a[i].momentaryLUFS, &b[i].momentaryLUFS,
+                         offsetof (ada::DynamicsMetrics, isClipping) - offsetof (ada::DynamicsMetrics, momentaryLUFS)) != 0)
+            return false;
+    return true;
+}
+} // namespace
+
+TEST_CASE ("WAV file analysis equals feeding the engine directly, and meets T3341")
+{
+    // 24-bit WAV of T3341 case 3 (gating) at 48 kHz, 10.05 s tail so the last bin is partial
+    auto s = toneSequence (48000, { { 10, -36 }, { 60, -23 }, { 10.05, -36 } });
+    const auto file = tempDir().getChildFile ("t3341-3.wav");
+    juce::WavAudioFormat wav;
+    writeFile (file, wav, s, 24);
+
+    const auto fromFile = analyseFile (file);
+    const auto direct = analyze (readBack (file), 4096);
+    CHECK (sameFrames (fromFile.frames, direct.frames));
+    CHECK (fromFile.final.frames == direct.final.frames);
+    CHECK (fromFile.final.truePeakMaxDBTP == direct.final.truePeakMaxDBTP);
+    REQUIRE (fromFile.summary.integrated.has_value());
+    CHECK (std::abs (*fromFile.summary.integrated - (-23.0)) <= 0.1);
+    CHECK (fromFile.frames.size() == 800);
+    file.deleteFile();
+}
+
+TEST_CASE ("FLAC and mono files")
+{
+    auto s = toneSequence (44100, { { 20, -23 } }, 1);
+    const auto file = tempDir().getChildFile ("mono.flac");
+    juce::FlacAudioFormat flac;
+    writeFile (file, flac, s, 24);
+    const auto r = analyseFile (file);
+    REQUIRE (r.summary.integrated.has_value());
+    CHECK (std::abs (*r.summary.integrated - (-26.0)) <= 0.1); // ADA-MONO: no dual-mono summing
+    CHECK (sameFrames (r.frames, analyze (readBack (file), 4096).frames));
+    file.deleteFile();
+}
+
+TEST_CASE ("Unsupported files are rejected with a message")
+{
+    ada::FileAnalysis fa;
+    CHECK_FALSE (fa.start (tempDir().getChildFile ("does-not-exist.wav")));
+    CHECK (fa.state() == ada::FileAnalysis::State::failed);
+    CHECK (fa.errorText().isNotEmpty());
+
+    // 4-channel WAV
+    Signal quad { 48000.0, std::vector<std::vector<float>> (4, std::vector<float> (4800, 0.1f)) };
+    const auto quadFile = tempDir().getChildFile ("quad.wav");
+    juce::WavAudioFormat wav;
+    writeFile (quadFile, wav, quad, 16);
+    CHECK_FALSE (fa.start (quadFile));
+    CHECK (fa.errorText().contains ("4 channels"));
+
+    // 22.05 kHz is not a multiple of 100 Hz
+    const auto odd = toneSequence (22050, { { 1, -20 } });
+    const auto oddFile = tempDir().getChildFile ("odd-rate.wav");
+    writeFile (oddFile, wav, odd, 16);
+    CHECK_FALSE (fa.start (oddFile));
+    CHECK (fa.errorText().contains ("22050"));
+
+    CHECK (fa.isSupportedFile (juce::File ("x.flac")));
+    CHECK (fa.isSupportedFile (juce::File ("x.WAV")));
+    CHECK_FALSE (fa.isSupportedFile (juce::File ("x.txt")));
+    quadFile.deleteFile();
+    oddFile.deleteFile();
+}
+
+TEST_CASE ("Cancelling stops the analysis")
+{
+    auto s = toneSequence (48000, { { 30, -20 } });
+    const auto file = tempDir().getChildFile ("cancel.wav");
+    juce::WavAudioFormat wav;
+    writeFile (file, wav, s, 16);
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+    CollectingSink sink;
+    int calls = 0;
+    const auto final = ada::FileAnalysis::analyseReader (*reader, sink, [&calls] { return ++calls > 3; });
+    CHECK_FALSE (final.has_value());
+    CHECK (sink.frames.size() < 300);
+    file.deleteFile();
+}

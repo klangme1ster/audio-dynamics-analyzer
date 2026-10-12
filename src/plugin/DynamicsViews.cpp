@@ -7,7 +7,9 @@
 
 // --- PsrMeter --------------------------------------------------------------------------------
 
-PsrMeter::PsrMeter()
+PsrMeter::PsrMeter() { restoreDefaultTooltip(); }
+
+void PsrMeter::restoreDefaultTooltip()
 {
     setTooltip ("PSR right now, as a bar coloured by its zone.\n"
                 "Solid line: lowest PSR since the last reset (the most squashed 3 seconds).\n"
@@ -25,6 +27,15 @@ void PsrMeter::setValues (std::optional<float> c, std::optional<float> m, std::o
     repaint();
 }
 
+void PsrMeter::setTitle (const juce::String& newTitle)
+{
+    if (newTitle != title)
+    {
+        title = newTitle;
+        repaint();
+    }
+}
+
 void PsrMeter::paint (juce::Graphics& g)
 {
     g.fillAll (theme::panel);
@@ -32,7 +43,7 @@ void PsrMeter::paint (juce::Graphics& g)
 
     g.setColour (theme::textSecondary);
     g.setFont (juce::FontOptions (12.0f));
-    g.drawText ("PSR now (dB)", r.removeFromTop (16.0f), juce::Justification::centredLeft);
+    g.drawText (title, r.removeFromTop (16.0f), juce::Justification::centredLeft);
     g.setColour (current ? theme::zoneColours[theme::zoneOf (*current)] : theme::textMuted);
     g.setFont (juce::FontOptions (24.0f));
     g.drawText (current ? theme::number (*current) : theme::dash(), r.removeFromTop (30.0f),
@@ -96,7 +107,9 @@ void PsrMeter::paint (juce::Graphics& g)
 
 // --- ZoneBar ---------------------------------------------------------------------------------
 
-ZoneBar::ZoneBar()
+ZoneBar::ZoneBar() { restoreDefaultTooltip(); }
+
+void ZoneBar::restoreDefaultTooltip()
 {
     setTooltip ("How much of the measured time (since the last reset) fell into each PSR zone.\n"
                 "Silence, very quiet passages and the first 3 seconds are not counted.\n"
@@ -109,19 +122,28 @@ void ZoneBar::setStats (const ada::HistoryStore::PsrStats& s)
     repaint();
 }
 
+void ZoneBar::setTitle (const juce::String& newTitle)
+{
+    if (newTitle != title)
+    {
+        title = newTitle;
+        repaint();
+    }
+}
+
 void ZoneBar::paint (juce::Graphics& g)
 {
     g.fillAll (theme::panel);
     auto r = getLocalBounds().toFloat().reduced (10.0f, 6.0f);
 
-    auto title = r.removeFromTop (16.0f);
+    auto titleRow = r.removeFromTop (16.0f);
     g.setFont (juce::FontOptions (12.0f));
     g.setColour (theme::textSecondary);
-    g.drawText ("Time in each PSR zone since reset", title, juce::Justification::centredLeft);
+    g.drawText (title, titleRow, juce::Justification::centredLeft);
     g.setColour (theme::textMuted);
     g.drawText (stats.measuredFrames > 0 ? "measured " + theme::timeLabel ((double) stats.measuredFrames * 0.1)
                                          : juce::String ("no measured audio yet"),
-                title, juce::Justification::centredRight);
+                titleRow, juce::Justification::centredRight);
     r.removeFromTop (5.0f);
 
     auto bar = r.removeFromTop (14.0f);

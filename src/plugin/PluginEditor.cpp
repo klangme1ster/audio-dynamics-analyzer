@@ -7,7 +7,63 @@
 namespace
 {
 constexpr float loudnessFloor = -70.0f; // BS.1770 absolute gate; anything below reads as "< -70"
-constexpr int readoutsHeight = 54, zoneBarHeight = 62, controlsHeight = 30, meterWidth = 130, gap = 8;
+constexpr int sourceBarHeight = 28, readoutsHeight = 54, zoneBarHeight = 62, controlsHeight = 30, meterWidth = 130,
+              gap = 8;
+
+struct ReadoutText
+{
+    const char* label;
+    const char* unit;
+    const char* help;
+};
+
+// Live metering: values right now / since the last reset
+const ReadoutText liveText[] = {
+    { "PSR", "dB", "Peak-to-short-term ratio: true peak minus short-term loudness over the same 3-second window.\n"
+             "Shows how hard the transients are limited right now. Lower = more squashed.\n"
+             "12 dB or more: open  |  10-12: controlled  |  8-10: heavy  |  below 8: over-limited.\n"
+             "Blank during the first 3 s, in silence and in very quiet passages." },
+    { "PSR min", "dB", "Lowest PSR since the last reset: the most compressed 3-second stretch so far.\n"
+                 "Silence, very quiet passages and the first 3 s are ignored." },
+    { "Short-term", "LUFS", "Short-term loudness (EBU R128 \"S\"): perceived loudness of the last 3 seconds." },
+    { "Momentary", "LUFS", "Momentary loudness (EBU R128 \"M\"): perceived loudness of the last 400 ms.\n"
+                   "Follows the music closely; good for spotting loud hits." },
+    { "Integrated", "LUFS", "Integrated loudness: average loudness since the last reset, ignoring silence and quiet parts (BS.1770 gating).\n"
+                    "This is what streaming services normalise to: Spotify and YouTube about -14 LUFS, Apple Music about -16 LUFS.\n"
+                    "With normalisation on, a louder track is simply turned down on playback." },
+    { "LRA", "LU", "Loudness range (EBU Tech 3342): how much the loudness varies between quiet and loud sections\n"
+             "(spread from the 10th to the 95th percentile of short-term loudness).\n"
+             "Measures macro-dynamics, e.g. verse vs. chorus, not transient limiting." },
+    { "True peak 3 s", "dBTP", "Highest true peak in the last 3 seconds, including peaks between samples\n"
+                       "(BS.1770 oversampling: 4x at 44.1/48 kHz, 2x at 88.2/96 kHz).\n"
+                       "This is the peak half of the PSR. Shows CLIP when it exceeds the clip threshold (default 0 dBTP)." },
+    { "Max true peak", "dBTP", "Highest true peak since the last reset.\n"
+                       "Keep it at or below -1 dBTP for streaming: lossy encoding (AAC, MP3) adds up to about 1 dB of overshoot." },
+    { "PLR", "dB", "Peak-to-loudness ratio: max true peak minus integrated loudness.\n"
+             "The headroom of the whole track. Loud modern masters: about 8-10 dB; dynamic recordings: 14 dB or more." },
+};
+
+// File analysis: values over the whole file (same definitions as the Python scanner's report)
+const ReadoutText fileText[] = {
+    { "PSR mean", "dB", "Average PSR over the measured parts of the file (silence, very quiet passages and the first 3 s excluded).\n"
+                  "12 dB or more: open  |  10-12: controlled  |  8-10: heavy  |  below 8: over-limited." },
+    { "PSR min", "dB", "Lowest PSR in the file: its most compressed 3-second stretch." },
+    { "Max S", "LUFS", "Maximum short-term loudness: the loudest 3-second window of the file (EBU R128 \"Max S\")." },
+    { "Max M", "LUFS", "Maximum momentary loudness: the loudest 400 ms window of the file (EBU R128 \"Max M\")." },
+    { "Integrated", "LUFS", "Integrated loudness of the whole file (BS.1770 gating).\n"
+                    "Streaming targets: Spotify and YouTube about -14 LUFS, Apple Music about -16 LUFS." },
+    { "LRA", "LU", "Loudness range of the whole file (EBU Tech 3342): spread between its quiet and loud sections." },
+    { "PSR P10", "dB", "The PSR the file stays below for 10 % of its measured time.\n"
+                 "More robust than the minimum: below 10 dB means large parts are limited hard." },
+    { "Max true peak", "dBTP", "Highest true peak in the file, including the last partial 100 ms.\n"
+                       "At or below -1 dBTP leaves room for the overshoot of lossy encoding." },
+    { "PLR", "dB", "Peak-to-loudness ratio of the file: max true peak minus integrated loudness." },
+};
+
+std::optional<float> toFloat (const std::optional<double>& v)
+{
+    return v ? std::optional<float> ((float) *v) : std::nullopt;
+}
 } // namespace
 
 // ---------------------------------------------------------------------------------------------
@@ -16,6 +72,17 @@ Readout::Readout (juce::String l, juce::String u, Kind k, const juce::String& he
     : label (std::move (l)), unit (std::move (u)), kind (k)
 {
     setTooltip (help);
+}
+
+void Readout::setLabel (const juce::String& newLabel, const juce::String& newUnit, const juce::String& help)
+{
+    setTooltip (help);
+    if (newLabel != label || newUnit != unit)
+    {
+        label = newLabel;
+        unit = newUnit;
+        repaint();
+    }
 }
 
 void Readout::setValue (float newValue, bool newAlarm)
@@ -52,20 +119,26 @@ void Readout::paint (juce::Graphics& g)
         text = theme::number (value);
         showUnit = true;
     }
-    // shrink the value to fit narrow cells (unit only when there is room)
+    // shrink the value until value and unit fit the cell; drop the unit only in very narrow cells
+    const juce::FontOptions unitFont (11.0f);
+    const int unitW = showUnit ? juce::GlyphArrangement::getStringWidthInt (juce::Font (unitFont), unit) + 4 : 0;
+    auto valueWidth = [&text] (float s) {
+        return juce::GlyphArrangement::getStringWidthInt (juce::Font (juce::FontOptions (s)), text);
+    };
     float size = 22.0f;
-    while (size > 13.0f && juce::GlyphArrangement::getStringWidthInt (juce::Font (juce::FontOptions (size)), text)
-                               > area.getWidth())
+    while (size > 15.0f && valueWidth (size) + unitW > area.getWidth())
+        size -= 1.0f;
+    while (size > 13.0f && valueWidth (size) > area.getWidth())
         size -= 1.0f;
     const juce::FontOptions valueFont (size);
-    const int w = juce::GlyphArrangement::getStringWidthInt (juce::Font (valueFont), text);
+    const int w = valueWidth (size);
     g.setColour (alarm ? theme::zoneColours[3] : theme::textPrimary);
     g.setFont (valueFont);
     g.drawText (text, area, juce::Justification::centredLeft);
-    if (showUnit && w + 4 + 28 <= area.getWidth())
+    if (showUnit && w + unitW <= area.getWidth())
     {
         g.setColour (theme::textMuted);
-        g.setFont (juce::FontOptions (11.0f));
+        g.setFont (unitFont);
         g.drawText (unit, area.withTrimmedLeft (w + 4).withTrimmedTop (6), juce::Justification::centredLeft);
     }
 }
@@ -78,43 +151,34 @@ AdaAudioProcessorEditor::AdaAudioProcessorEditor (AdaAudioProcessor& p)
       freezeAttachment (p.parameters, "freezeWhenStopped", freezeToggle)
 {
     using K = Readout::Kind;
-    readouts[psr] = std::make_unique<Readout> ("PSR", "dB", K::decibel,
-        "Peak-to-short-term ratio: true peak minus short-term loudness over the same 3-second window.\n"
-        "Shows how hard the transients are limited right now. Lower = more squashed.\n"
-        "12 dB or more: open  |  10-12: controlled  |  8-10: heavy  |  below 8: over-limited.\n"
-        "Blank during the first 3 s, in silence and in very quiet passages.");
-    readouts[psrMin] = std::make_unique<Readout> ("PSR min", "dB", K::decibel,
-        "Lowest PSR since the last reset: the most compressed 3-second stretch so far.\n"
-        "Silence, very quiet passages and the first 3 s are ignored.");
-    readouts[shortTerm] = std::make_unique<Readout> ("Short-term", "LUFS", K::loudness,
-        "Short-term loudness (EBU R128 \"S\"): perceived loudness of the last 3 seconds.");
-    readouts[momentary] = std::make_unique<Readout> ("Momentary", "LUFS", K::loudness,
-        "Momentary loudness (EBU R128 \"M\"): perceived loudness of the last 400 ms.\n"
-        "Follows the music closely; good for spotting loud hits.");
-    readouts[integrated] = std::make_unique<Readout> ("Integrated", "LUFS", K::loudness,
-        "Integrated loudness: average loudness since the last reset, ignoring silence and quiet parts (BS.1770 gating).\n"
-        "This is what streaming services normalise to: Spotify and YouTube about -14 LUFS, Apple Music about -16 LUFS.\n"
-        "A track louder than that is simply turned down on playback.");
-    readouts[lra] = std::make_unique<Readout> ("LRA", "LU", K::decibel,
-        "Loudness range (EBU Tech 3342): how much the loudness varies between quiet and loud sections\n"
-        "(spread from the 10th to the 95th percentile of short-term loudness).\n"
-        "Measures macro-dynamics, e.g. verse vs. chorus, not transient limiting.");
-    readouts[truePeak3s] = std::make_unique<Readout> ("True peak 3 s", "dBTP", K::decibel,
-        "Highest true peak in the last 3 seconds, including peaks between samples\n"
-        "(BS.1770 oversampling: 4x at 44.1/48 kHz, 2x at 88.2/96 kHz).\n"
-        "This is the peak half of the PSR. Shows CLIP when it exceeds the clip threshold (default 0 dBTP).");
-    readouts[truePeakMax] = std::make_unique<Readout> ("Max true peak", "dBTP", K::decibel,
-        "Highest true peak since the last reset.\n"
-        "Keep it at or below -1 dBTP for streaming: lossy encoding (AAC, MP3) adds up to about 1 dB of overshoot.");
-    readouts[plr] = std::make_unique<Readout> ("PLR", "dB", K::decibel,
-        "Peak-to-loudness ratio: max true peak minus integrated loudness.\n"
-        "The headroom of the whole track. Loud modern masters: about 8-11 dB; dynamic recordings: 14 dB or more.");
-    for (auto& r : readouts)
-        addAndMakeVisible (*r);
+    const K kinds[numFields] = { K::decibel,  K::decibel, K::loudness, K::loudness, K::loudness,
+                                 K::decibel,  K::decibel, K::decibel,  K::decibel };
+    for (int i = 0; i < numFields; ++i)
+    {
+        readouts[(size_t) i] = std::make_unique<Readout> (liveText[i].label, liveText[i].unit, kinds[i], liveText[i].help);
+        addAndMakeVisible (*readouts[(size_t) i]);
+    }
     addAndMakeVisible (graph);
     addAndMakeVisible (meter);
     addAndMakeVisible (zoneBar);
 
+    // Source bar
+    sourceLabel.setFont (juce::FontOptions (13.0f));
+    sourceLabel.setColour (juce::Label::textColourId, theme::textSecondary);
+    sourceLabel.setMinimumHorizontalScale (0.85f);
+    addAndMakeVisible (sourceLabel);
+    openButton.setTooltip ("Analyse an audio file (WAV, AIFF, FLAC, Ogg, MP3, WMA) at full speed.\n"
+                           "You can also drop a file anywhere on this window.");
+    openButton.onClick = [this] { openFileChooser(); };
+    addAndMakeVisible (openButton);
+    liveButton.setTooltip ("Return to metering the live input. The live history kept recording meanwhile.");
+    liveButton.onClick = [this] {
+        processor.fileAnalysis().cancel();
+        showFile (false);
+    };
+    addChildComponent (liveButton);
+
+    // Controls
     resetButton.setTooltip ("Start a new measurement now (clears the history, integrated loudness, LRA, peaks and PSR statistics).");
     resetOnPlayToggle.setTooltip (
         "Begin a new measurement when the playback position jumps: playback starts somewhere other than\n"
@@ -148,21 +212,135 @@ AdaAudioProcessorEditor::AdaAudioProcessorEditor (AdaAudioProcessor& p)
 
     activeShown = processor.isAnalysisActive();
     setResizable (true, true);
-    setResizeLimits (860, 520, 2400, 1600);
-    setSize (980, 620);
-    updateFromHistory();
+    setResizeLimits (860, 560, 2400, 1600);
+    setSize (980, 660);
+    showFile (processor.isShowingFile());
+
+    // Standalone: "Audio Dynamics Analyzer.exe song.flac" (also Explorer's "Open with") analyses the file
+    if (! inHost && processor.takeCommandLineFile())
+        for (auto arg : juce::JUCEApplicationBase::getCommandLineParameterArray())
+        {
+            const auto file = juce::File::getCurrentWorkingDirectory().getChildFile (arg.unquoted());
+            if (file.existsAsFile() && processor.fileAnalysis().isSupportedFile (file))
+            {
+                analyseFile (file);
+                break;
+            }
+        }
     startTimerHz (30);
 }
 
 AdaAudioProcessorEditor::~AdaAudioProcessorEditor() { stopTimer(); }
 
+// --- Modes -------------------------------------------------------------------------------------
+
+void AdaAudioProcessorEditor::showFile (bool shouldShowFile)
+{
+    processor.setShowingFile (shouldShowFile);
+    fileModeShown = shouldShowFile;
+    const auto& text = shouldShowFile ? fileText : liveText;
+    for (int i = 0; i < numFields; ++i)
+        readouts[(size_t) i]->setLabel (text[i].label, text[i].unit, text[i].help);
+    meter.setTitle (shouldShowFile ? "PSR over the file (dB)" : "PSR now (dB)");
+    zoneBar.setTitle (shouldShowFile ? "Time in each PSR zone (whole file)" : "Time in each PSR zone since reset");
+    if (shouldShowFile)
+    {
+        meter.setTooltip ("PSR over the whole file: the bar and the number show the mean.\n"
+                          "Solid line: lowest PSR (the most squashed 3 seconds). Dashed line: P10, the PSR the file\n"
+                          "stays below 10 % of its measured time.\n"
+                          "Green >= 12 open | yellow 10-12 controlled | orange 8-10 heavy | red < 8 over-limited.");
+        zoneBar.setTooltip ("How much of the file's measured time fell into each PSR zone.\n"
+                            "Silence, very quiet passages and the first 3 seconds are not counted.");
+    }
+    else
+    {
+        meter.restoreDefaultTooltip();
+        zoneBar.restoreDefaultTooltip();
+    }
+    liveButton.setVisible (shouldShowFile);
+    resetButton.setEnabled (! shouldShowFile);
+
+    if (shouldShowFile)
+    {
+        shownFileVersion = 0;
+        shownRunId = std::numeric_limits<std::uint64_t>::max(); // force a store/view refresh
+        shownFileState = ada::FileAnalysis::State::idle;
+        updateFromFile();
+    }
+    else
+    {
+        graph.setStore (processor.history().store());
+        graph.setStatusText ({});
+        updateFromHistory();
+        updateRestartStatus();
+    }
+    resized();
+    repaint();
+}
+
+void AdaAudioProcessorEditor::analyseFile (const juce::File& file)
+{
+    processor.fileAnalysis().start (file); // a failure is shown in the source bar
+    showFile (true);
+}
+
+void AdaAudioProcessorEditor::openFileChooser()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Choose an audio file to analyse", juce::File(),
+                                                   "*.wav;*.wave;*.aif;*.aiff;*.flac;*.ogg;*.mp3;*.wma");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [safeThis = juce::Component::SafePointer<AdaAudioProcessorEditor> (this)] (const juce::FileChooser& fc) {
+                              if (safeThis != nullptr && fc.getResult().existsAsFile())
+                                  safeThis->analyseFile (fc.getResult());
+                          });
+}
+
+// --- Drag and drop ---------------------------------------------------------------------------
+
+bool AdaAudioProcessorEditor::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    for (const auto& f : files)
+        if (processor.fileAnalysis().isSupportedFile (juce::File (f)))
+            return true;
+    return false;
+}
+
+void AdaAudioProcessorEditor::fileDragEnter (const juce::StringArray&, int, int)
+{
+    dragHover = true;
+    repaint();
+}
+
+void AdaAudioProcessorEditor::fileDragExit (const juce::StringArray&)
+{
+    dragHover = false;
+    repaint();
+}
+
+void AdaAudioProcessorEditor::filesDropped (const juce::StringArray& files, int, int)
+{
+    dragHover = false;
+    for (const auto& f : files)
+        if (processor.fileAnalysis().isSupportedFile (juce::File (f)))
+        {
+            analyseFile (juce::File (f));
+            break;
+        }
+    repaint();
+}
+
+// --- Updates ---------------------------------------------------------------------------------
+
 void AdaAudioProcessorEditor::updateFromHistory()
 {
     const auto& store = processor.history().store();
     shownVersion = store.version();
+    if (fileModeShown)
+        return;
+
+    sourceLabel.setText ("Live input. Drop an audio file here, or open one, to analyse it.", juce::dontSendNotification);
     const auto stats = store.psrStats();
     const float nan = std::numeric_limits<float>::quiet_NaN();
-
     if (store.empty())
     {
         for (auto& r : readouts)
@@ -188,6 +366,130 @@ void AdaAudioProcessorEditor::updateFromHistory()
     graph.repaint();
 }
 
+void AdaAudioProcessorEditor::updateFromFile()
+{
+    using State = ada::FileAnalysis::State;
+    auto& fa = processor.fileAnalysis();
+    shownFileVersion = fa.version();
+    const auto name = fa.file().getFileName();
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+
+    // new analysis (or none): new data source and a fresh view; never a dangling store
+    if (fa.runId() != shownRunId || fa.store() == nullptr)
+    {
+        shownRunId = fa.runId();
+        graph.setStore (fa.store() != nullptr ? *fa.store() : emptyStore);
+    }
+
+    juce::String info;
+    if (fa.state() != State::failed && fa.sampleRate() > 0.0)
+        info = theme::timeLabel (fa.durationSeconds()) + ", " + juce::String (fa.sampleRate() / 1000.0, 1) + " kHz "
+               + (fa.channels() == 1 ? "mono" : "stereo");
+
+    switch (fa.state())
+    {
+        case State::running:
+            sourceLabel.setText ("File: " + name + " (" + info + "). Analysing "
+                                     + juce::String (juce::roundToInt (fa.progress() * 100.0)) + " %",
+                                 juce::dontSendNotification);
+            break;
+        case State::finished:
+        {
+            const double speed = fa.analysisSeconds() > 0.0 ? fa.durationSeconds() / fa.analysisSeconds() : 0.0;
+            sourceLabel.setText ("File: " + name + " (" + info + "). Analysed in "
+                                     + juce::String (fa.analysisSeconds(), 1) + " s ("
+                                     + juce::String (juce::roundToInt (speed)) + "x real time)",
+                                 juce::dontSendNotification);
+            break;
+        }
+        case State::failed:
+            sourceLabel.setText (fa.errorText(), juce::dontSendNotification);
+            break;
+        case State::idle:
+            sourceLabel.setText ("No file. Drop an audio file here, or open one.", juce::dontSendNotification);
+            break;
+    }
+    graph.setStatusText (fa.state() == State::running ? "Analysing " + name : name);
+
+    if (fa.state() == State::finished && fa.summary())
+    {
+        const auto& s = *fa.summary();
+        auto value = [nan] (const std::optional<double>& v) { return v ? (float) *v : nan; };
+        readouts[psr]->setValue (value (s.psrMean));
+        readouts[psrMin]->setValue (value (s.psrMin));
+        readouts[shortTerm]->setValue (value (s.maxShortTerm));
+        readouts[momentary]->setValue (value (s.maxMomentary));
+        readouts[integrated]->setValue (value (s.integrated));
+        readouts[lra]->setValue (value (s.lra));
+        readouts[truePeak3s]->setValue (value (s.psrP10));
+        readouts[truePeakMax]->setValue (value (s.truePeakMax));
+        readouts[plr]->setValue (value (s.plr));
+        meter.setValues (toFloat (s.psrMean), toFloat (s.psrMin), toFloat (s.psrP10));
+
+        ada::HistoryStore::PsrStats stats;
+        stats.measuredFrames = s.measuredFrames;
+        stats.min = toFloat (s.psrMin);
+        stats.p10 = toFloat (s.psrP10);
+        for (std::size_t z = 0; z < 4; ++z)
+            stats.zonePercent[z] = s.zonePct[z] ? (float) *s.zonePct[z] : 0.0f;
+        zoneBar.setStats (stats);
+    }
+    else
+    {
+        // while analysing: the graph fills up; numbers appear when the whole file is measured
+        for (auto& r : readouts)
+            r->setValue (nan);
+        if (fa.store() != nullptr && fa.state() == State::running)
+        {
+            const auto stats = fa.store()->psrStats();
+            meter.setValues ({}, stats.min, stats.p10);
+            zoneBar.setStats (stats);
+        }
+        else
+        {
+            meter.setValues ({}, {}, {});
+            zoneBar.setStats ({});
+        }
+    }
+
+    if (fa.state() == State::finished && shownFileState != State::finished)
+        graph.showAll(); // whole file at a glance once it is done
+    shownFileState = fa.state();
+    graph.repaint();
+}
+
+void AdaAudioProcessorEditor::updateRestartStatus()
+{
+    const auto restart = processor.lastRestart();
+    shownRestartCount = restart.count;
+    const double fs = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 48000.0;
+    using R = AdaAudioProcessor::RestartReason;
+    const juce::String arrow (juce::CharPointer_UTF8 (" \xe2\x86\x92 "));
+    if (restart.reason == R::playbackJump)
+    {
+        const auto from = theme::timeLabel ((double) restart.from / fs, true);
+        const auto to = theme::timeLabel ((double) restart.to / fs, true);
+        statusLabel.setText ("New measurement: jump " + from + arrow + to, juce::dontSendNotification);
+        statusLabel.setTooltip ("The last automatic new measurement started because the playback position jumped:\n"
+                                "measured audio ended at " + from + ", playback continued at " + to + ".\n"
+                                "Resuming up to " + juce::String (ada::TransportTracker::resumeBackstepSeconds, 1)
+                                + " s before where measuring stopped, or within "
+                                + juce::String (ada::TransportTracker::jumpToleranceSeconds, 2)
+                                + " s after it, continues instead.\n"
+                                "Turn off \"New measurement when playback jumps\" to never restart automatically.");
+    }
+    else if (restart.reason == R::settingsChanged)
+    {
+        statusLabel.setText ("New measurement: settings changed", juce::dontSendNotification);
+        statusLabel.setTooltip ("The host changed the sample rate or the channel layout, so a new measurement started.");
+    }
+    else
+    {
+        statusLabel.setText ({}, juce::dontSendNotification);
+        statusLabel.setTooltip ({});
+    }
+}
+
 void AdaAudioProcessorEditor::timerCallback()
 {
     // React to the processor becoming (in)active, e.g. a device or sample-rate change
@@ -197,57 +499,40 @@ void AdaAudioProcessorEditor::timerCallback()
         resized();
         repaint();
     }
-    if (processor.history().store().version() != shownVersion)
-        updateFromHistory();
-    if (processor.isFrozen() != frozenShown)
+    if (fileModeShown)
     {
-        frozenShown = processor.isFrozen();
+        if (processor.fileAnalysis().version() != shownFileVersion)
+            updateFromFile();
+    }
+    else if (processor.history().store().version() != shownVersion)
+        updateFromHistory();
+
+    const bool frozen = processor.isFrozen() && ! fileModeShown;
+    if (frozen != frozenShown)
+    {
+        frozenShown = frozen;
         repaint();
     }
-
-    const auto restart = processor.lastRestart();
-    if (restart.count != shownRestartCount)
-    {
-        shownRestartCount = restart.count;
-        const double fs = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 48000.0;
-        using R = AdaAudioProcessor::RestartReason;
-        const juce::String arrow (juce::CharPointer_UTF8 (" \xe2\x86\x92 "));
-        if (restart.reason == R::playbackJump)
-        {
-            const auto from = theme::timeLabel ((double) restart.from / fs, true);
-            const auto to = theme::timeLabel ((double) restart.to / fs, true);
-            statusLabel.setText ("New measurement: jump " + from + arrow + to, juce::dontSendNotification);
-            statusLabel.setTooltip ("The last automatic new measurement started because the playback position jumped:\n"
-                                    "measured audio ended at " + from + ", playback continued at " + to + ".\n"
-                                    "Resuming up to " + juce::String (ada::TransportTracker::resumeBackstepSeconds, 1)
-                                    + " s before where measuring stopped, or within "
-                                    + juce::String (ada::TransportTracker::jumpToleranceSeconds, 2)
-                                    + " s after it, continues instead.\n"
-                                    "Turn off \"New measurement when playback jumps\" to never restart automatically.");
-        }
-        else if (restart.reason == R::settingsChanged)
-        {
-            statusLabel.setText ("New measurement: settings changed", juce::dontSendNotification);
-            statusLabel.setTooltip ("The host changed the sample rate or the channel layout, so a new measurement started.");
-        }
-        else
-        {
-            statusLabel.setText ({}, juce::dontSendNotification);
-            statusLabel.setTooltip ({});
-        }
-    }
+    if (processor.lastRestart().count != shownRestartCount)
+        updateRestartStatus();
 }
+
+// --- Layout and painting ---------------------------------------------------------------------
 
 void AdaAudioProcessorEditor::paint (juce::Graphics& g)
 {
     g.fillAll (theme::background);
-    if (! activeShown)
+    if (! contentVisible())
     {
+        auto area = getLocalBounds().reduced (gap);
+        area.removeFromTop (sourceBarHeight + gap);
+        area.removeFromBottom (controlsHeight + gap);
         g.setColour (theme::textSecondary);
         g.setFont (juce::FontOptions (15.0f));
-        g.drawFittedText ("Unsupported sample rate or channel layout.\nADA needs mono or stereo at a multiple of 100 Hz.",
-                          getLocalBounds().reduced (16), juce::Justification::centred, 3);
-        return;
+        g.drawFittedText ("No live metering: unsupported sample rate or channel layout\n"
+                          "(ADA needs mono or stereo at a multiple of 100 Hz).\n"
+                          "You can still analyse audio files: drop one here or use \"Open file...\".",
+                          area, juce::Justification::centred, 4);
     }
     if (frozenShown)
     {
@@ -260,14 +545,43 @@ void AdaAudioProcessorEditor::paint (juce::Graphics& g)
     }
 }
 
+void AdaAudioProcessorEditor::paintOverChildren (juce::Graphics& g)
+{
+    if (! dragHover)
+        return;
+    auto area = getLocalBounds().reduced (gap).toFloat();
+    g.setColour (theme::background.withAlpha (0.8f));
+    g.fillRoundedRectangle (area, 8.0f);
+    g.setColour (theme::shortTerm);
+    const float dashes[] = { 8.0f, 6.0f };
+    juce::Path outline;
+    outline.addRoundedRectangle (area.reduced (2.0f), 8.0f);
+    juce::Path dashed;
+    juce::PathStrokeType (2.0f).createDashedStroke (dashed, outline, dashes, 2);
+    g.fillPath (dashed);
+    g.setColour (theme::textPrimary);
+    g.setFont (juce::FontOptions (20.0f));
+    g.drawText ("Drop to analyse this file", area, juce::Justification::centred);
+}
+
 void AdaAudioProcessorEditor::resized()
 {
+    const bool visible = contentVisible();
     for (juce::Component* c : { (juce::Component*) &graph, (juce::Component*) &meter, (juce::Component*) &zoneBar })
-        c->setVisible (activeShown);
+        c->setVisible (visible);
     for (auto& r : readouts)
-        r->setVisible (activeShown);
+        r->setVisible (visible);
 
     auto area = getLocalBounds().reduced (gap);
+
+    auto source = area.removeFromTop (sourceBarHeight);
+    if (liveButton.isVisible())
+        liveButton.setBounds (source.removeFromRight (110));
+    source.removeFromRight (6);
+    openButton.setBounds (source.removeFromRight (110));
+    source.removeFromRight (8);
+    sourceLabel.setBounds (source);
+    area.removeFromTop (gap);
 
     auto controls = area.removeFromBottom (controlsHeight);
     resetButton.setBounds (controls.removeFromLeft (80));

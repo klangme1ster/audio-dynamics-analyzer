@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DynamicsEngine.h"
+#include "FileAnalysis.h"
 #include "MetricsFifo.h"
 #include "MetricsHistory.h"
 #include "TransportTracker.h"
@@ -8,6 +9,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <atomic>
+#include <utility>
 
 // Pass-through analyzer: audio is unchanged, metrics go to the UI through a lock-free FIFO.
 class AdaAudioProcessor : public juce::AudioProcessor
@@ -56,6 +58,12 @@ public:
     };
     RestartInfo lastRestart() const noexcept;
     ada::MetricsHistory& history() noexcept { return metricsHistory; }
+    ada::FileAnalysis& fileAnalysis() noexcept { return files; }
+    // Whether the editor shows the analysed file instead of live metering (message thread)
+    bool isShowingFile() const noexcept { return showingFile; }
+    void setShowingFile (bool shouldShow) noexcept { showingFile = shouldShow; }
+    // Standalone: a file given on the command line is analysed once, when the first editor opens
+    bool takeCommandLineFile() noexcept { return ! std::exchange (commandLineHandled, true); }
     bool isAnalysisActive() const noexcept { return active.load(); }
     bool isFrozen() const noexcept { return frozen.load (std::memory_order_relaxed); }
     double analysisSampleRate() const noexcept { return engine.sampleRate(); }
@@ -68,6 +76,8 @@ private:
     ada::DynamicsEngine engine;
     ada::MetricsFifo fifo;
     ada::MetricsHistory metricsHistory { fifo }; // message thread: drains the FIFO, keeps 90 min
+    ada::FileAnalysis files;                     // offline analysis of dropped/opened files
+    bool showingFile = false, commandLineHandled = false;
     std::atomic<bool> active { false };
     int handleTransport (bool& analyse, int numSamples) noexcept; // returns samples to skip
     void noteRestart (RestartReason reason, std::int64_t from, std::int64_t to) noexcept;

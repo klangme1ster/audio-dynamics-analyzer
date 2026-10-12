@@ -19,15 +19,20 @@ public:
 
     void push (const DynamicsMetrics& frame) noexcept override
     {
+        if (! tryPush (frame))
+            dropped.fetch_add (1, std::memory_order_relaxed);
+    }
+
+    // Returns false when full (the offline file reader waits and retries instead of dropping).
+    bool tryPush (const DynamicsMetrics& frame) noexcept
+    {
         int start1, size1, start2, size2;
         fifo.prepareToWrite (1, start1, size1, start2, size2);
         if (size1 + size2 == 0)
-        {
-            dropped.fetch_add (1, std::memory_order_relaxed);
-            return;
-        }
+            return false;
         buffer[(size_t) (size1 > 0 ? start1 : start2)] = frame;
         fifo.finishedWrite (1);
+        return true;
     }
 
     // UI thread: calls fn(frame) for every queued frame, oldest first.

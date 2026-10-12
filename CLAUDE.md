@@ -37,6 +37,6 @@
 * Run Python tests: `pytest python/tests` (EBU file tests skip unless `python/tools/fetch_ebu_testset.py` was run)
 * Configure CMake: `cmake -B build -S . -DCMAKE_BUILD_TYPE=Release`
 * Build Standalone and VST3: `cmake --build build --config Release -j`
-* Run C++ engine tests: `ctest --test-dir build -C Release`
+* Run C++ tests (engine + file analysis): `ctest --test-dir build -C Release`
 * Inspect the GUI without a host: `build/src/plugin/ada_view_snapshot_artefacts/Release/ada_view_snapshot.exe out.png [width] [height]`
 * Python ↔ C++ parity: `pytest python/tests/test_parity.py` (needs the built `ada_cli`)

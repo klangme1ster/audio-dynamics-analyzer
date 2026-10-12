@@ -114,7 +114,7 @@ Fields appear in CSV and JSON. A missing value is empty in CSV and `null` in JSO
 
 ## Plugin (VST3 / standalone)
 
-Work in progress: the live display is done, file analysis in the standalone app is next. Build it as described in the [README](README.md#building-the-plugin-work-in-progress), then copy `Audio Dynamics Analyzer.vst3` to `C:\Program Files\Common Files\VST3` (Windows) and insert it on a track or the master bus. It passes audio through unchanged.
+Build it as described in the [README](README.md#building-the-plugin-work-in-progress), then copy `Audio Dynamics Analyzer.vst3` to `C:\Program Files\Common Files\VST3` (Windows) and insert it on a track or the master bus. It passes audio through unchanged.
 
 **Readouts.** Hover over any value for an explanation.
 
@@ -130,7 +130,7 @@ Work in progress: the live display is done, file analysis in the standalone app 
 | PLR | Max true peak minus integrated loudness |
 
 **Graphs.**
-* **History** (centre): short-term loudness (blue) and the 3-second true peak (orange) on top, PSR over the coloured zone bands below, on one time axis. Scroll the mouse wheel to zoom (10 s to 90 min), drag to scroll back in time, double-click to follow live again. Hovering shows the exact values at that moment. The history keeps recording while the plugin window is closed.
+* **History** (centre): short-term loudness (blue) and the 3-second true peak (orange) on top, PSR over the coloured zone bands below, on one time axis. Scroll the mouse wheel to zoom (10 s up to 90 min live, up to 6 h for a file), drag to scroll back in time, double-click to follow live again. Hovering shows the exact values at that moment. The history keeps recording while the plugin window is closed.
 * **PSR meter** (right): the current PSR as a bar in its zone colour. The solid line marks the lowest PSR since reset, the dashed line P10, the PSR the track stays below 10 % of the time.
 * **Zone bar** (bottom): how much of the measured time since reset fell into each PSR zone. A large red or orange share means most of the track is heavily limited.
 
@@ -173,6 +173,13 @@ Compare a mix with good references in the same genre rather than chasing a singl
 * **Reset** button: start a new measurement at any time.
 
 The standalone app has no transport, so it always measures its audio input. JUCE mutes the input until you pick a device under *Options*, to avoid feedback.
+
+**Analysing a file.** Drop an audio file anywhere on the window, or click **Open file...** (WAV, AIFF, FLAC, Ogg, MP3 or WMA; M4A/AAC files are not supported by the plugin yet, use `ada-scan` for them). This works in the standalone app and inside the plugin, for example to check a reference track while mixing. The file is analysed in the background at several hundred times real time; the graph fills as it goes and then zooms out to the whole file.
+* The readouts switch to the file's results: PSR mean, PSR min and PSR P10, max short-term (Max S) and max momentary (Max M) loudness, integrated loudness, LRA, max true peak and PLR. For WAV, AIFF and FLAC these are the same values `ada-scan` reports; for MP3 they can differ slightly (different decoder).
+* The meter shows the PSR over the file (mean as the bar, min and P10 as markers), and the zone bar the whole file.
+* **Back to live** returns to live metering; the live history kept recording meanwhile.
+* The standalone app also opens a file given on the command line, so you can use Explorer's *Open with* on an audio file: `"Audio Dynamics Analyzer.exe" song.flac`.
+* Files must be mono or stereo at a sample rate that is a multiple of 100 Hz (32, 44.1, 48, 88.2, 96, 176.4, 192 kHz); others are rejected with a message.
 
 ---
 

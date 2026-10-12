@@ -26,10 +26,10 @@ ada::DynamicsMetrics frame (std::int64_t bin, float psr, std::uint32_t epoch = 0
 TEST_CASE ("HistoryStore keeps the last 90 minutes")
 {
     ada::HistoryStore h;
-    const int total = ada::HistoryStore::capacity + 10;
+    const int total = ada::HistoryStore::liveCapacity + 10;
     for (int i = 0; i < total; ++i)
         h.push (frame (i, 10.0f));
-    CHECK (h.size() == ada::HistoryStore::capacity);
+    CHECK (h.size() == ada::HistoryStore::liveCapacity);
     CHECK (h.at (0).binIndex == 10);
     CHECK (h.latest().binIndex == total - 1);
     CHECK (h.lowerBound (10) == 0);
@@ -37,6 +37,16 @@ TEST_CASE ("HistoryStore keeps the last 90 minutes")
     CHECK (h.lowerBound (total) == h.size());
     // statistics cover the whole measurement, not just what is still in the ring
     CHECK (h.psrStats().measuredFrames == (std::uint64_t) (total - 29));
+}
+
+TEST_CASE ("A file history can hold more than 90 minutes")
+{
+    ada::HistoryStore h (100000);
+    for (int i = 0; i < 80000; ++i)
+        h.push (frame (i, 10.0f));
+    CHECK (h.capacity() == 100000);
+    CHECK (h.size() == 80000);
+    CHECK (h.at (0).binIndex == 0);
 }
 
 TEST_CASE ("A new epoch starts a new history")

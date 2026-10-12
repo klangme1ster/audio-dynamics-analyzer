@@ -12,8 +12,9 @@ namespace
                                       / HistoryStore::psrBinWidth);
 }
 
-HistoryStore::HistoryStore()
-    : ring ((std::size_t) capacity), psrHistogram ((std::size_t) numPsrBins, 0)
+HistoryStore::HistoryStore (int capacity)
+    : ring ((std::size_t) std::max (1, capacity)), ringCapacity (std::max (1, capacity)),
+      psrHistogram ((std::size_t) numPsrBins, 0)
 {
 }
 
@@ -45,12 +46,12 @@ void HistoryStore::push (const DynamicsMetrics& f)
         clear();
     }
 
-    if (count < capacity)
-        ring[(std::size_t) ((head + count++) % capacity)] = f;
+    if (count < ringCapacity)
+        ring[(std::size_t) ((head + count++) % ringCapacity)] = f;
     else
     {
         ring[(std::size_t) head] = f;
-        head = (head + 1) % capacity;
+        head = (head + 1) % ringCapacity;
     }
 
     if (passesLivePsrGate (f))
@@ -66,7 +67,7 @@ void HistoryStore::push (const DynamicsMetrics& f)
 
 const DynamicsMetrics& HistoryStore::at (int i) const noexcept
 {
-    return ring[(std::size_t) ((head + i) % capacity)];
+    return ring[(std::size_t) ((head + i) % ringCapacity)];
 }
 
 int HistoryStore::lowerBound (std::int64_t bin) const noexcept

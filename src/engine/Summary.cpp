@@ -51,6 +51,7 @@ Summary summarize (const std::vector<DynamicsMetrics>& frames, const DynamicsEng
     s.psrMean = std::accumulate (psr.begin(), psr.end(), 0.0) / count;
     s.psrP10 = psr[(std::size_t) std::floor ((count - 1.0) * 0.10 + 0.5)];
     s.peakNearCeilingPct = 100.0 * (double) nearCeiling / count;
+    s.measuredFrames = psr.size();
 
     const double edges[] = { 12.0, 10.0, 8.0 };
     std::array<double, 4> zone {};

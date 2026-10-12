@@ -13,7 +13,7 @@ Find out how squashed a master is. ADA measures loudness and dynamics to **ITU-R
 | Stage | What | State |
 |---|---|---|
 | 1 | Python reference engine, batch scanner `ada-scan`, plotter `ada-plot` | ✅ working |
-| 2 | C++20 / JUCE 8 VST3 plugin + standalone app (drag-and-drop analysis) | 🚧 engine done and matching Python; plugin builds with a basic display; GUI and file analysis next |
+| 2 | C++20 / JUCE 8 VST3 plugin + standalone app (drag-and-drop analysis) | ✅ live metering with history, PSR meter and zone bar; file analysis matching the Python reference (WAV/AIFF/FLAC). Delivery presets next |
 
 The Python engine is the numerical reference. The C++ engine is a port of it and must match it within fixed tolerances (spec test ADA-PARITY).
 
@@ -65,7 +65,7 @@ ctest --test-dir build -C Release        # C++ engine tests
 pytest python/tests/test_parity.py       # C++ engine vs. Python reference
 ```
 
-The first configure downloads JUCE 8. The VST3 and the standalone app end up in `build/src/plugin/AudioDynamicsAnalyzer_artefacts/Release/`. The plugin shows the live readouts, a scrolling PSR/loudness history, a PSR meter and the time per PSR zone (hover over anything for an explanation); drag-and-drop file analysis in the standalone app is next. See [USAGE.md](USAGE.md#plugin-vst3--standalone) for how it behaves in a DAW.
+The first configure downloads JUCE 8. The VST3 and the standalone app end up in `build/src/plugin/AudioDynamicsAnalyzer_artefacts/Release/`. The plugin shows the live readouts, a scrolling PSR/loudness history, a PSR meter and the time per PSR zone (hover over anything for an explanation); drop an audio file on the window (or open one) to analyse it at several hundred times real time, in the standalone app or inside the plugin. See [USAGE.md](USAGE.md#plugin-vst3--standalone) for how it behaves in a DAW.
 
 ## How it measures
 

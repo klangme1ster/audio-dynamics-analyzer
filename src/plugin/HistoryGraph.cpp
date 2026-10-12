@@ -12,7 +12,31 @@ double frameTime (const ada::DynamicsMetrics& f) { return (double) (f.binIndex +
 constexpr float leftMargin = 46.0f, rightMargin = 8.0f;
 } // namespace
 
-HistoryGraph::HistoryGraph (const ada::HistoryStore& s) : store (s) {}
+HistoryGraph::HistoryGraph (const ada::HistoryStore& s) : store (&s) {}
+
+void HistoryGraph::setStore (const ada::HistoryStore& newStore)
+{
+    store = &newStore;
+    shownMeasurement = store->measurementId();
+    followLive = true;
+    span = 60.0;
+    repaint();
+}
+
+void HistoryGraph::showAll()
+{
+    span = std::clamp (latestTime(), minSpan, std::max (minSpan, maxSpanFor (*store)));
+    followLive = true;
+    repaint();
+}
+
+void HistoryGraph::setStatusText (const juce::String& text)
+{
+    if (text == statusText)
+        return;
+    statusText = text;
+    repaint();
+}
 
 void HistoryGraph::resized()
 {
@@ -25,7 +49,7 @@ void HistoryGraph::resized()
     psrArea = r;
 }
 
-double HistoryGraph::latestTime() const { return store.empty() ? 0.0 : frameTime (store.latest()); }
+double HistoryGraph::latestTime() const { return store->empty() ? 0.0 : frameTime (store->latest()); }
 
 HistoryGraph::View HistoryGraph::currentView() const
 {
@@ -56,8 +80,8 @@ template <typename Get>
 void HistoryGraph::drawSeries (juce::Graphics& g, juce::Rectangle<float> area, const View& v, float lo, float hi,
                                Get get, juce::Colour colour, float thickness) const
 {
-    const int first = std::max (0, store.lowerBound ((std::int64_t) std::floor (v.start * 10.0) - 2) - 1);
-    const int last = store.lowerBound ((std::int64_t) std::ceil (v.end * 10.0) + 1); // exclusive
+    const int first = std::max (0, store->lowerBound ((std::int64_t) std::floor (v.start * 10.0) - 2) - 1);
+    const int last = store->lowerBound ((std::int64_t) std::ceil (v.end * 10.0) + 1); // exclusive
     if (last <= first)
         return;
 
@@ -76,7 +100,7 @@ void HistoryGraph::drawSeries (juce::Graphics& g, juce::Rectangle<float> area, c
         bool penDown = false;
         for (int i = first; i < last; ++i)
         {
-            const auto& f = store.at (i);
+            const auto& f = store->at (i);
             const float value = get (f);
             if (! std::isfinite (value))
             {
@@ -108,7 +132,7 @@ void HistoryGraph::drawSeries (juce::Graphics& g, juce::Rectangle<float> area, c
         };
         for (int i = first; i < last; ++i)
         {
-            const auto& f = store.at (i);
+            const auto& f = store->at (i);
             const int c = (int) std::floor (xOf (frameTime (f), v) - area.getX());
             if (c != column)
             {
@@ -157,9 +181,9 @@ void HistoryGraph::drawTimeAxis (juce::Graphics& g, const View& v) const
 void HistoryGraph::paint (juce::Graphics& g)
 {
     g.fillAll (theme::panel);
-    if (store.measurementId() != shownMeasurement) // new measurement: back to live
+    if (store->measurementId() != shownMeasurement) // new measurement: back to live
     {
-        shownMeasurement = store.measurementId();
+        shownMeasurement = store->measurementId();
         followLive = true;
     }
     const auto v = currentView();
@@ -178,11 +202,11 @@ void HistoryGraph::paint (juce::Graphics& g)
     legend (theme::shortTerm, "Short-term loudness (LUFS)");
     legend (theme::truePeak, "True peak, max over 3 s (dBTP)");
     g.setColour (theme::textMuted);
-    const juce::String state = followLive ? "Live, last " + theme::timeLabel (span)
-                                          : "Scrolled back (double-click: live)";
+    const juce::String view = followLive ? "last " + theme::timeLabel (span) : "scrolled back (double-click: latest)";
+    const juce::String state = statusText.isNotEmpty() ? statusText + ", " + view : "Live, " + view;
     g.drawText (state + "   |   wheel: zoom, drag: scroll", h, juce::Justification::centredRight);
 
-    if (store.empty())
+    if (store->empty())
     {
         g.setColour (theme::textMuted);
         g.setFont (juce::FontOptions (14.0f));
@@ -193,10 +217,10 @@ void HistoryGraph::paint (juce::Graphics& g)
     // Level panel: range follows the visible data in 5 dB steps
     float dataMin = std::numeric_limits<float>::max(), dataMax = std::numeric_limits<float>::lowest();
     {
-        const int first = std::max (0, store.lowerBound ((std::int64_t) std::floor (v.start * 10.0)) - 1);
-        const int last = store.lowerBound ((std::int64_t) std::ceil (v.end * 10.0) + 1);
+        const int first = std::max (0, store->lowerBound ((std::int64_t) std::floor (v.start * 10.0)) - 1);
+        const int last = store->lowerBound ((std::int64_t) std::ceil (v.end * 10.0) + 1);
         for (int i = first; i < last; ++i)
-            for (float value : { store.at (i).shortTermLUFS, store.at (i).truePeak3sDBTP })
+            for (float value : { store->at (i).shortTermLUFS, store->at (i).truePeak3sDBTP })
                 if (std::isfinite (value) && value > -70.0f)
                 {
                     dataMin = std::min (dataMin, value);
@@ -274,10 +298,10 @@ void HistoryGraph::drawHover (juce::Graphics& g, const View& v, float lo, float 
     if (! hoverX || *hoverX < levelArea.getX() || *hoverX > levelArea.getRight())
         return;
     const double t = timeAt (*hoverX, v);
-    const int i = store.lowerBound ((std::int64_t) std::llround (t * 10.0) - 1);
-    if (i >= store.size())
+    const int i = store->lowerBound ((std::int64_t) std::llround (t * 10.0) - 1);
+    if (i >= store->size())
         return;
-    const auto& f = store.at (i);
+    const auto& f = store->at (i);
     if (std::abs (frameTime (f) - t) > 0.25)
         return;
 
@@ -321,7 +345,8 @@ void HistoryGraph::drawHover (juce::Graphics& g, const View& v, float lo, float 
 void HistoryGraph::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
 {
     const auto v = currentView();
-    const double newSpan = std::clamp (span * std::exp (-(double) wheel.deltaY * 1.5), minSpan, maxSpan);
+    const double newSpan = std::clamp (span * std::exp (-(double) wheel.deltaY * 1.5), minSpan,
+                                       std::max (minSpan, maxSpanFor (*store)));
     if (followLive)
         span = newSpan; // anchored at the live edge
     else
