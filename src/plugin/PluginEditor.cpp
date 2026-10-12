@@ -441,7 +441,7 @@ void AdaAudioProcessorEditor::analyseFile (const juce::File& file)
 void AdaAudioProcessorEditor::openFileChooser()
 {
     chooser = std::make_unique<juce::FileChooser> ("Choose an audio file to analyse", juce::File(),
-                                                   "*.wav;*.wave;*.aif;*.aiff;*.flac;*.ogg;*.mp3;*.wma");
+                                                   processor.fileAnalysis().wildcard());
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                           [safeThis = juce::Component::SafePointer<AdaAudioProcessorEditor> (this)] (const juce::FileChooser& fc) {
                               if (safeThis != nullptr && fc.getResult().existsAsFile())

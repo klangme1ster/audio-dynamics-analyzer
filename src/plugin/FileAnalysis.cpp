@@ -1,5 +1,7 @@
 #include "FileAnalysis.h"
 
+#include "MediaFoundationFormat.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -45,6 +47,7 @@ public:
         auto stop = [this] { return threadShouldExit(); };
         BlockingFifoSink sink (fifo, stop);
         final = analyseReader (*reader, sink, stop, &progress, &failedToDecode);
+        reader.reset(); // on this thread: decoders such as Media Foundation belong to the reading thread
         done.store (true, std::memory_order_release);
     }
 
@@ -99,7 +102,7 @@ std::optional<DynamicsEngine::Final> FileAnalysis::analyseReader (juce::AudioFor
 
 // ---------------------------------------------------------------------------------------------
 
-FileAnalysis::FileAnalysis() { formats.registerBasicFormats(); }
+FileAnalysis::FileAnalysis() { registerAudioFormats (formats); }
 
 FileAnalysis::~FileAnalysis()
 {
@@ -153,7 +156,8 @@ bool FileAnalysis::start (const juce::File& f)
     numChannels = (int) reader->numChannels;
     duration = (double) reader->lengthInSamples / rate;
     // lengthInSamples is an estimate for some compressed formats, hence the margin
-    const int estimatedFrames = (int) std::ceil (duration * 10.0 * 1.05) + 100;
+    // (clamped in double: a broken header must not overflow the int or reserve gigabytes)
+    const int estimatedFrames = (int) std::min (std::ceil (duration * 10.0 * 1.05) + 100.0, (double) maxGraphFrames);
     history = std::make_unique<HistoryStore> (std::clamp (estimatedFrames, 100, maxGraphFrames));
     allFrames.reserve ((size_t) estimatedFrames);
 

@@ -39,4 +39,4 @@
 * Build Standalone and VST3: `cmake --build build --config Release -j`
 * Run C++ tests (engine + file analysis): `ctest --test-dir build -C Release`
 * Inspect the GUI without a host: `build/src/plugin/ada_view_snapshot_artefacts/Release/ada_view_snapshot.exe out.png [width] [height]`
-* Python ↔ C++ parity: `pytest python/tests/test_parity.py` (needs the built `ada_cli`)
+* Python ↔ C++ parity: `pytest python/tests/test_parity.py` (needs the built `ada_cli`; the M4A cases also need `ada_file_cli`, Windows only)

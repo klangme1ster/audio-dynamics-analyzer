@@ -14,8 +14,13 @@ import signals
 FS = 48000
 
 
-def write_encoded(path, x: np.ndarray, fs: int, codec: str, sample_format: str) -> None:
-    """Encode a float (frames, channels) signal with PyAV (ALAC: s16p, AAC: fltp)."""
+def write_encoded(path, x: np.ndarray, fs: int, codec: str, sample_format: str,
+                  options: dict[str, str] | None = None) -> None:
+    """Encode a float (frames, channels) signal with PyAV (ALAC: s16p, AAC: fltp).
+
+    options are encoder options, e.g. {"aac_pns": "0"} (FFmpeg's AAC encoder uses perceptual
+    noise substitution by default: the decoder generates that noise, so peaks depend on it).
+    """
     layout = "stereo" if x.shape[1] == 2 else "mono"
     planar = np.ascontiguousarray(x.T)
     if sample_format == "s16p":
@@ -23,7 +28,7 @@ def write_encoded(path, x: np.ndarray, fs: int, codec: str, sample_format: str) 
     else:
         planar = planar.astype(np.float32)
     with av.open(str(path), "w") as out:
-        stream = out.add_stream(codec, rate=fs, layout=layout)
+        stream = out.add_stream(codec, rate=fs, layout=layout, options=options or {})
         if codec == "aac":
             stream.bit_rate = 256_000
         step = 1024 if codec == "aac" else 4096

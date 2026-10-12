@@ -149,3 +149,116 @@ def test_cpp_matches_python(case, block, tmp_path):
 def test_generated_cpp_tables_are_current():
     tool = REPO / "python" / "tools" / "gen_cpp_tables.py"
     assert subprocess.run([sys.executable, str(tool), "--check"]).returncode == 0
+
+
+# --- decoded files (ADA-PARITY, M4A): the plugin's file analysis vs the Python scanner ----------
+# C++ decodes M4A with Windows Media Foundation, Python with FFmpeg (PyAV). Both drop the encoder
+# priming given by the container and give identical samples (ALAC: lossless; AAC: the two decoders
+# agree), so the standard tolerances apply. Exception: AAC files coded with PNS (perceptual noise
+# substitution; FFmpeg's encoder uses it by default) let the decoder generate noise, so peaks
+# differ between any two decoders; loudness still matches (test_m4a_pns_loudness_matches_python).
+
+def find_file_cli() -> Path | None:
+    if os.environ.get("ADA_FILE_CLI"):
+        return Path(os.environ["ADA_FILE_CLI"])
+    found = [p for p in (REPO / "build").rglob("ada_file_cli*")
+             if p.name in ("ada_file_cli.exe", "ada_file_cli") and p.is_file()]
+    return max(found, key=lambda p: p.stat().st_mtime) if found else None
+
+
+FILE_CLI = find_file_cli()
+needs_file_cli = pytest.mark.skipif(FILE_CLI is None or sys.platform != "win32",
+                                    reason="ada_file_cli not built (M4A reading needs Windows)")
+
+
+def song(fs: int, channels: int, seconds: int = 15) -> np.ndarray:
+    """Drum-like transients over noise, a quiet, a limited loud and a medium section."""
+    t = np.arange(seconds * fs) / fs
+    rng = np.random.default_rng(3)
+    beat, snare = np.mod(t, 0.5), np.mod(t - 0.25, 0.5)
+    x = (0.9 * np.exp(-beat / 0.03) * np.sin(2 * np.pi * 55 * beat)
+         + 0.5 * np.exp(-snare / 0.05) * rng.standard_normal(len(t)) * (snare < 0.2))
+    x = x[:, None] + 0.2 * signals.pink_noise(fs, len(t), level_db=-20.0, channels=channels)
+    gain = np.repeat([0.3, 2.5, 0.8], -(-len(t) // 3))[:len(t), None]
+    return np.tanh(x * gain * 1.5) / 1.5
+
+
+def analyse_both(case: str, tmp_path: Path, codec: str, sample_format: str, fs: int, channels: int,
+                 options: dict[str, str] | None = None) -> tuple:
+    from ada_core.engine import analyze_file
+    from test_decode import write_encoded
+
+    x = song(fs, channels)
+    if sample_format == "s16p":
+        x = np.round(np.clip(x, -1, 1) * 32767) / 32767
+    path = tmp_path / f"{case}.m4a"
+    write_encoded(path, x, fs, codec, sample_format, options)
+    py = analyze_file(path)
+    out = subprocess.run([str(FILE_CLI), str(path)], capture_output=True, text=True, check=True)
+    assert "Media Foundation" in out.stderr  # read by the M4A reader, not another format
+    cpp = json.loads(out.stdout)
+    # the container's priming is dropped and the length is the same
+    assert cpp["frames"] == py.frames
+    assert cpp["sample_rate"] == fs and cpp["channels"] == channels
+    return py, cpp
+
+
+M4A_CASES = {  # name: (codec, sample format, fs, channels, encoder options)
+    "aac-44k-stereo": ("aac", "fltp", 44100, 2, {"aac_pns": "0"}),
+    "aac-48k-mono": ("aac", "fltp", 48000, 1, {"aac_pns": "0"}),
+    "alac-48k-stereo": ("alac", "s16p", 48000, 2, None),
+}
+
+
+@needs_file_cli
+@pytest.mark.parametrize("case", list(M4A_CASES))
+def test_m4a_file_analysis_matches_python(case, tmp_path):
+    py, cpp = analyse_both(case, tmp_path, *M4A_CASES[case])
+    n = len(py.short_term)
+    assert_close_db(to_db(cpp["momentary"]), py.momentary, 0.01, "momentary")
+    assert_close_db(to_db(cpp["short_term"]), py.short_term, 0.01, "short_term")
+    assert_close_db(to_db(cpp["true_peak_3s"]), py.true_peak_3s, 0.01, "true_peak_3s")
+    with np.errstate(divide="ignore"):
+        assert_close_db(to_db(cpp["bin_peak_dbtp"]), 20 * np.log10(py.bin_peak), 0.01, "bin_peak")
+    assert_close_db(to_db(cpp["short_term_peak"]), sub_grid_peaks(py.short_term_10ms, 299, n), 0.01,
+                    "short_term_peak")
+
+    ps, cs = py.summary(), cpp["summary"]
+    tolerances = {"integrated_lufs": 0.02, "lra": 0.05, "true_peak_max_dbtp": 0.01, "plr": 0.03,
+                  "max_momentary_lufs": 0.01, "max_short_term_lufs": 0.01, "psr_min": 0.01,
+                  "psr_mean": 0.01, "psr_p10": 0.01, "psr_green_pct": 0.5, "psr_yellow_pct": 0.5,
+                  "psr_orange_pct": 0.5, "psr_red_pct": 0.5}
+    for key, tol in tolerances.items():
+        if ps[key] is None:
+            assert cs[key] is None, key
+        else:
+            assert cs[key] is not None, key
+            assert abs(cs[key] - ps[key]) <= tol, (key, cs[key], ps[key])
+
+
+@needs_file_cli
+def test_m4a_broken_edit_list_length_is_not_trusted(tmp_path):
+    """An edit list claiming ~50 days must not turn into days of silence (MF duration wins)."""
+    from test_decode import write_encoded
+
+    path = tmp_path / "broken.m4a"
+    write_encoded(path, song(48000, 2, 5), 48000, "aac", "fltp", {"aac_pns": "0"})
+    data = bytearray(path.read_bytes())
+    i = data.find(b"elst")
+    assert i > 0 and data[i + 4] == 0  # version 0: entry = duration (u32), media time, rate
+    data[i + 12:i + 16] = bytes([255, 255, 255, 255])
+    path.write_bytes(bytes(data))
+    out = subprocess.run([str(FILE_CLI), str(path)], capture_output=True, text=True, check=True,
+                         timeout=120)  # an untrusted length would decode for hours
+    frames = json.loads(out.stdout)["frames"]
+    assert abs(frames - 5 * 48000) <= 48000 // 10 + 1024
+
+
+@needs_file_cli
+def test_m4a_pns_loudness_matches_python(tmp_path):
+    """With PNS the decoders' noise differs: loudness matches, peaks are not compared."""
+    py, cpp = analyse_both("aac-pns", tmp_path, "aac", "fltp", 48000, 2, {"aac_pns": "1"})
+    assert_close_db(to_db(cpp["short_term"]), py.short_term, 0.05, "short_term")
+    ps, cs = py.summary(), cpp["summary"]
+    assert abs(cs["integrated_lufs"] - ps["integrated_lufs"]) <= 0.02
+    assert abs(cs["lra"] - ps["lra"]) <= 0.05

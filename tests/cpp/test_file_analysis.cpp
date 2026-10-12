@@ -4,6 +4,7 @@
 #include <doctest/doctest.h>
 
 #include "FileAnalysis.h"
+#include "MediaFoundationFormat.h"
 #include "Summary.h"
 #include "TestSupport.h"
 
@@ -164,4 +165,142 @@ TEST_CASE ("Cancelling stops the analysis")
     CHECK_FALSE (final.has_value());
     CHECK (sink.frames.size() < 300);
     file.deleteFile();
+}
+
+// --- M4A gapless information (Media Foundation does not apply it; MediaFoundationFormat.cpp) ----
+namespace
+{
+// An MP4 box: 32-bit size, 4-character type, payload
+juce::MemoryBlock box (const char* type, const juce::MemoryBlock& payload)
+{
+    juce::MemoryOutputStream out;
+    out.writeIntBigEndian ((int) payload.getSize() + 8);
+    out.write (type, 4);
+    out.write (payload.getData(), payload.getSize());
+    return out.getMemoryBlock();
+}
+
+juce::MemoryBlock concat (std::initializer_list<juce::MemoryBlock> parts)
+{
+    juce::MemoryBlock all;
+    for (const auto& p : parts)
+        all.append (p.getData(), p.getSize());
+    return all;
+}
+
+juce::MemoryBlock bytes (std::initializer_list<int> values) // 32-bit big-endian words
+{
+    juce::MemoryOutputStream out;
+    for (int v : values)
+        out.writeIntBigEndian (v);
+    return out.getMemoryBlock();
+}
+
+juce::MemoryBlock text (const char* s) { return juce::MemoryBlock (s, std::strlen (s)); }
+
+juce::MemoryBlock fourcc (const char* s) { return juce::MemoryBlock (s, 4); }
+
+// version 0 mvhd / mdhd: version+flags, creation, modification, time scale, duration
+juce::MemoryBlock timeHeader (const char* type, int scale, int duration)
+{
+    return box (type, bytes ({ 0, 0, 0, scale, duration }));
+}
+
+juce::MemoryBlock audioTrack (int mediaScale, std::optional<std::pair<int, int>> edit /* duration, media time */)
+{
+    const auto hdlr = box ("hdlr", concat ({ bytes ({ 0, 0 }), fourcc ("soun"), bytes ({ 0, 0, 0 }), text ("x") }));
+    const auto mdia = box ("mdia", concat ({ timeHeader ("mdhd", mediaScale, 0), hdlr }));
+    if (! edit)
+        return box ("trak", mdia);
+    const auto elst = box ("elst", bytes ({ 0, 1, edit->first, edit->second, 0x00010000 }));
+    return box ("trak", concat ({ box ("edts", elst), mdia }));
+}
+
+juce::MemoryBlock iTunSmpb (const char* value, bool quickTimeMeta = false)
+{
+    const auto name = box ("name", concat ({ bytes ({ 0 }), text ("iTunSMPB") }));
+    const auto data = box ("data", concat ({ bytes ({ 1, 0 }), text (value) }));
+    const auto item = box ("----", concat ({ box ("mean", concat ({ bytes ({ 0 }), text ("com.apple.iTunes") })), name, data }));
+    // ISO meta: version/flags, then children; QuickTime-style (some Apple files): children only
+    const auto hdlr = box ("hdlr", concat ({ bytes ({ 0, 0 }), fourcc ("mdir"), bytes ({ 0, 0, 0 }), text ("x") }));
+    const auto children = concat ({ hdlr, box ("ilst", item) });
+    const auto meta = box ("meta", quickTimeMeta ? children : concat ({ bytes ({ 0 }), children }));
+    return box ("udta", meta);
+}
+
+ada::Mp4Timing timingOf (const juce::MemoryBlock& file, double rate)
+{
+    juce::MemoryInputStream in (file, false);
+    return ada::readMp4Timing (in, rate);
+}
+} // namespace
+
+TEST_CASE ("M4A gapless info: edit list, iTunSMPB, none")
+{
+    const auto ftyp = box ("ftyp", concat ({ fourcc ("M4A "), bytes ({ 0 }) }));
+    const auto mdat = box ("mdat", text ("audio"));
+
+    // edit list (FFmpeg's AAC encoder): 1024 priming samples, 576 000 samples long
+    auto t = timingOf (concat ({ ftyp, mdat, box ("moov", concat ({ timeHeader ("mvhd", 1000, 12000),
+                                                                   audioTrack (48000, std::pair { 12000, 1024 }) })) }),
+                       48000.0);
+    CHECK (t.primingSamples == 1024);
+    REQUIRE (t.lengthSamples.has_value());
+    CHECK (*t.lengthSamples == 576000);
+
+    // iTunes: no edit list, iTunSMPB with 2112 (0x840) priming and 44 100 (0xAC44) samples
+    t = timingOf (concat ({ ftyp, box ("moov", concat ({ timeHeader ("mvhd", 44100, 46400), audioTrack (44100, std::nullopt),
+                                                        iTunSmpb (" 00000000 00000840 000001BC 000000000000AC44 00000000") })),
+                            mdat }),
+                  44100.0);
+    CHECK (t.primingSamples == 2112);
+    REQUIRE (t.lengthSamples.has_value());
+    CHECK (*t.lengthSamples == 44100);
+
+    // the same in a QuickTime-style meta box
+    t = timingOf (concat ({ ftyp, box ("moov", concat ({ timeHeader ("mvhd", 44100, 46400), audioTrack (44100, std::nullopt),
+                                                        iTunSmpb (" 00000000 00000840 000001BC 000000000000AC44 00000000", true) })) }),
+                  44100.0);
+    CHECK (t.primingSamples == 2112);
+    CHECK (t.lengthSamples == std::optional<juce::int64> (44100));
+
+    // priming beyond FFmpeg's limit (16384) is not believed
+    t = timingOf (concat ({ ftyp, box ("moov", concat ({ timeHeader ("mvhd", 44100, 46400), audioTrack (44100, std::nullopt),
+                                                        iTunSmpb (" 00000000 00010000 000001BC 000000000000AC44") })) }),
+                  44100.0);
+    CHECK (t.primingSamples == 0);
+
+    // an edit list whose entry is cut short is ignored, not read from the next box
+    {
+        const auto hdlr = box ("hdlr", concat ({ bytes ({ 0, 0 }), fourcc ("soun"), bytes ({ 0, 0, 0 }), text ("x") }));
+        const auto mdia = box ("mdia", concat ({ timeHeader ("mdhd", 48000, 0), hdlr }));
+        const auto elst = box ("elst", bytes ({ 0, 1, 12000 })); // count 1, entry truncated after the duration
+        const auto trak = box ("trak", concat ({ box ("edts", elst), mdia }));
+        t = timingOf (concat ({ ftyp, box ("moov", concat ({ timeHeader ("mvhd", 1000, 12000), trak })) }), 48000.0);
+        CHECK (t.primingSamples == 0);
+        CHECK (! t.lengthSamples.has_value());
+    }
+
+    // neither (e.g. many phone recorders): nothing to trim
+    t = timingOf (concat ({ ftyp, box ("moov", concat ({ timeHeader ("mvhd", 44100, 44100), audioTrack (44100, std::nullopt) })) }),
+                  44100.0);
+    CHECK (t.primingSamples == 0);
+    CHECK (! t.lengthSamples.has_value());
+
+    // not an MP4 (raw ADTS AAC) and truncated files: nothing, no crash
+    CHECK (timingOf (concat ({ bytes ({ (int) 0xFFF15080 }), text ("adts") }), 48000.0).primingSamples == 0);
+    auto truncated = concat ({ ftyp, box ("moov", concat ({ timeHeader ("mvhd", 1000, 12000), audioTrack (48000, std::pair { 12000, 1024 }) })) });
+    truncated.setSize (truncated.getSize() - 20);
+    CHECK (! timingOf (truncated, 48000.0).lengthSamples.has_value());
+}
+
+TEST_CASE ("M4A files are offered by the file analysis on Windows")
+{
+    ada::FileAnalysis analysis;
+#if JUCE_WINDOWS
+    CHECK (analysis.isSupportedFile (juce::File ("song.m4a")));
+    CHECK (analysis.isSupportedFile (juce::File ("song.AAC")));
+    CHECK (analysis.wildcard().contains ("*.m4a"));
+#endif
+    CHECK (! analysis.isSupportedFile (juce::File ("notes.txt")));
 }

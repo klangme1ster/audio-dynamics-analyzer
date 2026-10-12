@@ -52,6 +52,8 @@ public:
     std::uint64_t runId() const noexcept { return runCount; }
 
     bool isSupportedFile (const juce::File& f) const;
+    // File-chooser pattern for every readable format, e.g. "*.wav;*.flac;...;*.m4a"
+    juce::String wildcard() const { return formats.getWildcardForAllFormats(); }
 
     // Decodes `reader` in blocks and feeds the engine. Blocking; used by the worker and by tests.
     // `sink` receives every frame; returns the engine's final values, or nullopt if cancelled or

@@ -16,6 +16,7 @@ target_sources(AudioDynamicsAnalyzer PRIVATE
     DynamicsViews.cpp
     FileAnalysis.cpp
     HistoryGraph.cpp
+    MediaFoundationFormat.cpp
     OutputMonitor.cpp
     PluginEditor.cpp
     PluginProcessor.cpp)
@@ -37,6 +38,13 @@ target_link_libraries(AudioDynamicsAnalyzer
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
 
+# Media Foundation (M4A / AAC reader, part of Windows)
+set(ADA_MEDIA_FOUNDATION_LIBS "")
+if(WIN32)
+    set(ADA_MEDIA_FOUNDATION_LIBS mfplat mfreadwrite mfuuid)
+endif()
+target_link_libraries(AudioDynamicsAnalyzer PRIVATE ${ADA_MEDIA_FOUNDATION_LIBS})
+
 # Developer tool: renders the dynamics views for a synthetic song into a PNG (no host needed)
 juce_add_console_app(ada_view_snapshot PRODUCT_NAME "ada_view_snapshot")
 target_sources(ada_view_snapshot PRIVATE
@@ -57,7 +65,8 @@ if(ADA_BUILD_TESTS)
     juce_add_console_app(ada_file_analysis_tests PRODUCT_NAME "ada_file_analysis_tests")
     target_sources(ada_file_analysis_tests PRIVATE
         ${PROJECT_SOURCE_DIR}/tests/cpp/test_file_analysis.cpp
-        FileAnalysis.cpp)
+        FileAnalysis.cpp
+        MediaFoundationFormat.cpp)
     target_include_directories(ada_file_analysis_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/cpp)
     target_include_directories(ada_file_analysis_tests SYSTEM PRIVATE ${doctest_SOURCE_DIR})
@@ -67,7 +76,25 @@ if(ADA_BUILD_TESTS)
         ada_engine
         juce::juce_audio_formats
         juce::juce_events
+        ${ADA_MEDIA_FOUNDATION_LIBS}
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
     add_test(NAME ada_file_analysis_tests COMMAND ada_file_analysis_tests)
+
+    # File runner for the Python parity test of decoded formats (python/tests/test_parity.py)
+    juce_add_console_app(ada_file_cli PRODUCT_NAME "ada_file_cli")
+    target_sources(ada_file_cli PRIVATE
+        ${PROJECT_SOURCE_DIR}/tests/cpp/ada_file_cli.cpp
+        FileAnalysis.cpp
+        MediaFoundationFormat.cpp)
+    target_include_directories(ada_file_cli PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/tests/cpp)
+    target_compile_definitions(ada_file_cli PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+        JUCE_USE_MP3AUDIOFORMAT=1 JUCE_USE_WINDOWS_MEDIA_FORMAT=1)
+    target_link_libraries(ada_file_cli PRIVATE
+        ada_engine
+        juce::juce_audio_formats
+        juce::juce_events
+        ${ADA_MEDIA_FOUNDATION_LIBS}
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
 endif()
