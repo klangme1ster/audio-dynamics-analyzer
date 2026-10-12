@@ -10,6 +10,9 @@ juce_add_plugin(AudioDynamicsAnalyzer
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     VST3_CATEGORIES Analyzer
+    # app icon (python/tools/make_icon.py): the small one is the bar-only variant for 16/32 px
+    ICON_BIG ${PROJECT_SOURCE_DIR}/resources/icon/ada-icon-1024.png
+    ICON_SMALL ${PROJECT_SOURCE_DIR}/resources/icon/ada-icon-32.png
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
 target_sources(AudioDynamicsAnalyzer PRIVATE

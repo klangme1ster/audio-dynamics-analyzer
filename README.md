@@ -1,4 +1,4 @@
-# Audio Dynamics Analyzer (ADA)
+# <img src="resources/icon/ada-icon-128.png" width="48" align="top" alt=""> Audio Dynamics Analyzer (ADA)
 
 Find out how squashed a master is. ADA measures loudness and dynamics to **ITU-R BS.1770** and **EBU R128**. The measurements are:
 
@@ -79,7 +79,7 @@ The first configure downloads JUCE 8. The VST3 and the standalone app end up in 
 
 ### Releases
 
-Pushing a version tag builds and publishes a release (`.github/workflows/release.yml`): GitHub builds on Windows, runs all tests, packs the VST3, the standalone app and `packaging/INSTALL.txt` into a zip and attaches it with `packaging/release-notes.md`. The tag must match the version in `CMakeLists.txt`:
+Pushing a version tag builds and publishes a release (`.github/workflows/release.yml`): GitHub builds on Windows, runs the tests (the M4A comparisons only where the build machine's Windows can decode AAC; otherwise the run shows a warning), packs the VST3, the standalone app and `packaging/INSTALL.txt` into a zip and attaches it with `packaging/release-notes.md`. The tag must match the version in `CMakeLists.txt`:
 
 ```bash
 git tag v0.1.0

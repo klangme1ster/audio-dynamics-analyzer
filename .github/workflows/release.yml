@@ -1,11 +1,12 @@
 # Builds the Windows VST3 and standalone app, runs all tests and, for a version tag (v0.1.0),
-# publishes a GitHub release with a zip. Run it by hand (Actions tab) for a test build without
-# a release; the zip is then attached to the run as an artifact.
+# publishes a GitHub release with a zip. For a test build without a release, run it by hand
+# (Actions tab) or push a branch named ci/...; the zip is then attached to the run as an artifact.
 name: Release
 
 on:
   push:
     tags: ["v*"]
+    branches: ["ci/**"]   # test builds: push a branch named ci/... (no release)
   workflow_dispatch:
 
 permissions:
@@ -19,9 +20,9 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -44,14 +45,32 @@ jobs:
         run: ctest --test-dir build -C Release --output-on-failure
 
       - name: Python tests
-        run: pytest python/tests -q -k "not m4a_file and not m4a_broken and not m4a_pns"
-
-      # M4A parity needs Windows' Media Foundation, which server images may not include; where it
-      # exists, the tests must pass
-      - name: Python M4A parity tests (Media Foundation)
         run: |
-          if (Test-Path "$env:WINDIR\System32\mfplat.dll") { pytest python/tests/test_parity.py -q -k "m4a"; if ($LASTEXITCODE) { exit $LASTEXITCODE } }
-          else { Write-Output "::warning::Media Foundation is not available on this runner; M4A parity tests skipped" }
+          $out = pytest python/tests -q --tb=short -k "not m4a_file and not m4a_broken and not m4a_pns" 2>&1
+          $code = $LASTEXITCODE
+          $out
+          if ($code) { $out | Select-String -Pattern '^(FAILED|E  )' | Select-Object -First 30 | ForEach-Object { "::error::$($_.Line)" } }
+          exit $code
+
+      # M4A parity needs Windows' Media Foundation with its AAC decoder, which server images may
+      # lack. Probe by opening a small AAC file with ada_file_cli; where that works, the tests must
+      # pass, otherwise they are skipped with a warning that carries the reader's message.
+      # M4A parity needs Windows' Media Foundation with its AAC decoder, which server images may
+      # lack. The probe opens a small AAC file and reports (as annotations) whether that works and
+      # how it lines up with FFmpeg; where it works, the M4A tests must pass.
+      - name: Probe Media Foundation (AAC decoding)
+        id: mf
+        run: python python/tools/probe_media_foundation.py
+
+      - name: Python M4A parity tests (Media Foundation)
+        if: steps.mf.outputs.available == 'true'
+        run: |
+          $out = pytest python/tests/test_parity.py -q --tb=short -k "m4a" 2>&1
+          $code = $LASTEXITCODE
+          $out
+          # failures as annotations: readable on the run page without signing in
+          if ($code) { $out | Select-String -Pattern '^(FAILED|E  )' | Select-Object -First 30 | ForEach-Object { "::error::$($_.Line)" } }
+          exit $code
 
       - name: Package
         id: package

@@ -42,3 +42,4 @@
 * Python ↔ C++ parity: `pytest python/tests/test_parity.py` (needs the built `ada_cli`; the M4A cases also need `ada_file_cli`, Windows only)
 * Release: bump `VERSION` in `CMakeLists.txt`, then push a tag `vX.Y.Z`; `.github/workflows/release.yml` builds, tests and publishes the zip
 * README screenshot: `python python/tools/capture_screenshot.py <audio file> docs/screenshots/file-view.png --size 2000x1250` (retake when the GUI changes visibly)
+* App icon: `python python/tools/make_icon.py` regenerates `resources/icon/` (SVG, PNGs, ICO); the build uses `ada-icon-1024.png` and `ada-icon-32.png`

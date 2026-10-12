@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <iterator>
 #include <optional>
@@ -367,6 +368,8 @@ namespace
 
 class MediaFoundationReader : public juce::AudioFormatReader
 {
+    static bool debug() { return juce::SystemStats::getEnvironmentVariable ("ADA_MF_DEBUG", {}).isNotEmpty(); }
+
 public:
     MediaFoundationReader (juce::InputStream* in, juce::File f) : juce::AudioFormatReader (in, mfFormatName), path (std::move (f)) {}
 
@@ -393,6 +396,20 @@ public:
         if (probe == nullptr)
             return false;
         const auto duration = durationOf (*probe.Get());
+        if (debug())
+        {
+            for (const auto& [name, key] : { std::pair { "encoder delay", MF_SD_AUDIO_ENCODER_DELAY },
+                                             std::pair { "encoder padding", MF_SD_AUDIO_ENCODER_PADDING } })
+            {
+                PROPVARIANT v;
+                PropVariantInit (&v);
+                const auto hr = probe->GetPresentationAttribute (audioStream, key, &v);
+                std::fprintf (stderr, "MF %s: hr=%08lx vt=%d value=%lu\n", name, (unsigned long) hr, (int) v.vt,
+                              v.vt == VT_UI4 ? (unsigned long) v.ulVal : 0ul);
+                PropVariantClear (&v);
+            }
+            std::fprintf (stderr, "MF duration (100 ns): %lld\n", duration ? (long long) *duration : -1ll);
+        }
         probe.Reset();
         sampleRate = (double) f.sampleRate;
         numChannels = f.channels;
@@ -428,6 +445,8 @@ public:
             lengthInSamples = std::max<juce::int64> (0, *mfLength - priming);
         else
             return false;
+        if (debug())
+            std::fprintf (stderr, "container priming %lld, length %lld\n", (long long) priming, (long long) lengthInSamples);
         return lengthInSamples > 0;
     }
 
@@ -511,6 +530,9 @@ private:
         pendingStart = nextStart;
         if ((flags & MF_SOURCE_READERF_ENDOFSTREAM) != 0)
         {
+            if (debug())
+                std::fprintf (stderr, "end of stream after %lld file samples (+%lld priming dropped)\n", (long long) nextStart,
+                              (long long) priming);
             endOfStream = true;
             return true;
         }
@@ -529,6 +551,13 @@ private:
         std::memcpy (pending.data(), data, floats * sizeof (float));
         buffer->Unlock();
 
+        if (firstSample && debug())
+        {
+            LONGLONG sampleDuration = 0;
+            sample->GetSampleDuration (&sampleDuration);
+            std::fprintf (stderr, "first sample: timestamp %lld (100 ns), duration %lld, %zu frames, flags %08lx\n",
+                          (long long) timestamp, (long long) sampleDuration, floats / numChannels, (unsigned long) flags);
+        }
         if (firstSample)
         {
             firstSample = false;

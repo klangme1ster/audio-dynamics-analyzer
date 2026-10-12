@@ -35,7 +35,8 @@ int main (int argc, char** argv)
     std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
     if (reader == nullptr)
     {
-        std::cerr << "cannot open " << arg (argv[1]).toRawUTF8() << "\n";
+        std::cerr << "cannot open " << arg (argv[1]).toRawUTF8() << " (Media Foundation "
+                  << (ada::mediaFoundationAvailable() ? "available" : "not available") << ")\n";
         return 1;
     }
     ada::DynamicsEngine probe; // for the oversampling factor only

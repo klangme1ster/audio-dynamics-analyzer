@@ -20,3 +20,4 @@ reports/
 *.png
 !docs/*.png
 !docs/screenshots/*.png
+!resources/icon/*.png
