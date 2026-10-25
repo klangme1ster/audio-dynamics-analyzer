@@ -634,7 +634,9 @@ void AdaAudioProcessorEditor::updateFromHistory()
         else if (monitor->isRunning())
         {
             const auto format = juce::String (monitor->sampleRate() / 1000.0, 1) + " kHz"
-                                + (monitor->channels() > 2 ? ", front left/right" : "");
+                                + (monitor->channels() <= 2 ? juce::String()
+                                   : monitor->layoutExact() ? ", " + juce::String (ada::displayName (monitor->layout()))
+                                                            : juce::String (", front left/right"));
             text = "Measuring the output (" + format + ")";
             details = "Measuring what " + monitor->deviceName() + " plays (" + format + ").";
         }

@@ -296,7 +296,7 @@ namespace
 
     struct StreamFormat
     {
-        UINT32 sampleRate = 0, channels = 0;
+        UINT32 sampleRate = 0, channels = 0, channelMask = 0; // mask: WAVE speaker bits, 0 if unknown
     };
 
     // Opens `path`, selects the first audio stream and asks for 32-bit float at the native rate and
@@ -343,6 +343,10 @@ namespace
             return nullptr;
         if (subtype != MFAudioFormat_Float || bits != 32 || got.sampleRate != f.sampleRate || got.channels != f.channels)
             return nullptr;
+        // the decoder's speaker mask (AAC channel configuration), else the stream's own
+        if (FAILED (current->GetUINT32 (MF_MT_AUDIO_CHANNEL_MASK, &f.channelMask)))
+            if (FAILED (native->GetUINT32 (MF_MT_AUDIO_CHANNEL_MASK, &f.channelMask)))
+                f.channelMask = 0;
         format = f;
         return reader;
     }
@@ -413,6 +417,8 @@ public:
         probe.Reset();
         sampleRate = (double) f.sampleRate;
         numChannels = f.channels;
+        if (f.channelMask != 0)
+            metadataValues.set ("ChannelMask", juce::String ((juce::int64) f.channelMask)); // as the WAV reader does
         bitsPerSample = 32;
         usesFloatingPointData = true;
         // Media Foundation ignores the edit list / iTunSMPB: drop the priming and cut at the real

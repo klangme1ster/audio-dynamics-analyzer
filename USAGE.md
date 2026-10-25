@@ -16,18 +16,25 @@ This installs two commands, `ada-scan` and `ada-plot`, and the Python package `a
 **Supported input:**
 * Formats: WAV, FLAC, AIFF, OGG and MP3 (through libsndfile), plus M4A (AAC or ALAC) and raw AAC (through PyAV, which bundles FFmpeg; no separate install needed).
 * Lossy files are measured as decoded. AAC and MP3 encoding typically raises the true peak by up to about 1 dB compared with the master; that is real and is why streaming services ask for −1 dBTP.
-* Channels: mono or stereo.
+* Channels: mono, stereo, 5.0, 5.1 or 7.1 (see [How channels are measured](#how-channels-are-measured)).
 * Sample rates: any multiple of 100 Hz, such as 32, 44.1, 48, 88.2, 96, 176.4 or 192 kHz.
 
-Other channel counts or sample rates are reported as errors and skipped.
+Other channel counts, multichannel files whose layout is unknown, and other sample rates are reported as errors and skipped.
 
 ### How channels are measured
 
 The same in `ada-scan`, the plugin and the standalone app:
 * **Stereo is not folded down to mono.** As BS.1770 prescribes, left and right are K-weighted separately, and their *powers* are added (weight 1.0 each). A sum to mono, (L+R)/2, would read out-of-phase content such as wide reverbs or stereo synths too quiet.
-* **True peak** is oversampled per channel; the higher of the two counts. PSR and PLR use these two values, so they are stereo-correct as well.
+* **True peak** is oversampled per channel; the highest channel counts (the LFE is not included). PSR and PLR use this value, so they are channel-correct as well.
 * **Mono** files count as one channel with weight 1.0. They are not duplicated to dual-mono (that would read 3 dB louder): a −23 dBFS mono sine reads −26 LUFS, the same sine on both channels of a stereo file −23 LUFS.
-* **Surround (5.1, 7.1, ...) is not supported yet.** It would need the BS.1770 channel weights (1.41 for the surround channels, LFE excluded). Surround files are rejected; the standalone app's *Output* view measures surround devices on their front left and right channels only.
+* **Surround (5.0, 5.1, 7.1)** uses the BS.1770 channel weights: 1.0 for left, right and centre, 1.41 (+1.5 dB) for the surround and rear channels. Channels are never folded down; their weighted powers are added.
+* **The LFE is not measured**: not for loudness (BS.1770 excludes it) and, as a simplification, not for true peak either. A very loud LFE can therefore clip without ADA showing it.
+* **Which channel is which** (the layout) is taken from the source: the channel mask of a WAV file (`WAVE_FORMAT_EXTENSIBLE`), the channel configuration of an M4A / AAC file, the host's bus layout in the plugin, the speaker mask of a Windows output device. ADA never guesses silently:
+  * A file with 3 or more channels and no layout information, such as a plain 6-channel WAV, is rejected. The message names the likely layout (5 channels: 5.0, 6: 5.1, 8: 7.1; none for 3, 4 or 7). You supply or confirm it: `ada-scan --layout 5.1 file.wav`, or the layout selector in the plugin and the standalone app, where the suggestion is marked *(suggested)* until you pick it.
+  * `--layout` takes `5.0`, `5.1`, `7.1` or the speakers in file channel order, such as `L,R,C,LFE,Ls,Rs` or a permuted order like `Ls,L,Rs,C,LFE,R` (speakers: `L R C LFE Ls Rs Lb Rb`, each at most once). The choice overrides what the file says.
+  * Standard orders: 5.0 is `L R C Ls Rs`, 5.1 is `L R C LFE Ls Rs`, 7.1 is `L R C LFE Lb Rb Ls Rs` (WAV order). A "back" pair and a "side" pair are both weighted as surround channels.
+  * FLAC and Ogg files do not carry a layout that ADA reads, so their 3+ channel files need `--layout` or the selector. Apple Lossless (ALAC) 5.1 in M4A also needs it in the plugin and standalone app; `ada-scan` reads it from the file.
+  * Output devices with other speaker sets (quad, 2.1, 7.1 wide) are measured on their front left and right channels only.
 
 ---
 
@@ -44,6 +51,7 @@ ada-scan PATH [PATH ...] [options]
 | `-j N`, `--jobs N` | Number of parallel worker processes (default: all CPU cores) |
 | `--export-csv FILE` | Write a CSV report, one row per file |
 | `--export-json FILE` | Write a JSON report (a list of objects) |
+| `--layout NAME\|ROLES` | Channel layout for files with 3+ channels: `5.0`, `5.1`, `7.1` or a role list such as `L,R,C,LFE,Ls,Rs`. Overrides the layout in the file; needed for files without one |
 | `--plot DIR` | Save a dynamics plot per file into `DIR` |
 | `--plot-format png\|pdf\|svg` | Plot format (default `png`) |
 | `--plot-width PX` | Plot width in pixels (default 2160) |
@@ -98,6 +106,7 @@ Fields appear in CSV and JSON. A missing value is empty in CSV and `null` in JSO
 |---|---|---|
 | `file` | — | Absolute path |
 | `duration_s`, `sample_rate`, `channels` | s, Hz, — | File properties |
+| `layout`, `channel_roles` | — | Channel layout used (`mono`, `stereo`, `5.0`, `5.1`, `7.1` or `custom`) and the speakers in file channel order |
 | `oversampling` | × | True-peak oversampling used: 4, 2, or 1 (above 96 kHz) |
 | `integrated_lufs` | LUFS | Integrated loudness, BS.1770 gated |
 | `lra` | LU | Loudness range, EBU Tech 3342 |
@@ -208,7 +217,7 @@ Compare a mix with good references in the same genre rather than chasing a singl
 * It measures the input *without* playing it: the output stays silent unless you turn on **Play input to output**, which is off at every start. That avoids feedback, so JUCE's feedback protection (input mute) is switched off; leave "Mute audio input" in the *Options* audio settings unticked, or the analysis receives silence. With speakers instead of headphones, turning playback on can cause feedback.
 * **Output view: measuring what Windows plays.** Pick an output device in the list (*Default output* follows the Windows setting) and ADA measures everything that device plays, for example Spotify, a browser or a media player. It starts measuring the default output the first time you open the view; **Output analysis** turns it off and on, and **Reset** starts a new measurement. Pauses in playback are measured as silence, so the time axis keeps running.
   * This uses Windows' loopback capture, which sees the audio after the Windows mixer, including per-application volume. Programs that play through ASIO (e.g. Cubase) bypass the Windows mixer and cannot be measured this way: use the plugin on Cubase's master bus, or your interface's loopback input in the **Live** view.
-  * Surround devices are measured on their front left and right channels only (no surround loudness, see [How channels are measured](#how-channels-are-measured)). The device must run at a sample rate that is a multiple of 100 Hz (44.1, 48, 96 kHz, ...).
+  * Devices with 5.0, 5.1 or 7.1 speakers are measured in full with the surround weights; other multichannel devices (quad, 2.1, ...) on their front left and right channels only (see [How channels are measured](#how-channels-are-measured)). The device must run at a sample rate that is a multiple of 100 Hz (44.1, 48, 96 kHz, ...).
   * Start the app directly in this view with `"Audio Dynamics Analyzer.exe" --output`.
 * To measure what another program plays through ASIO, choose your audio interface's loopback channel (or a virtual audio cable) as the input under *Options* and use the **Live** view.
 * The window remembers its position between sessions. The title bar shows what you are looking at, e.g. "Audio Dynamics Analyzer – song.flac (3:45)", "– output: Default output (Speakers)" or "– live input".
@@ -224,7 +233,8 @@ Compare a mix with good references in the same genre rather than chasing a singl
 * The meter shows the PSR over the file (mean as the bar, min and P10 as markers), and the zone bar the whole file.
 * Switch back with **Live**; the live history kept recording meanwhile.
 * The standalone app also opens a file given on the command line, so you can use Explorer's *Open with* on an audio file: `"Audio Dynamics Analyzer.exe" song.flac`.
-* Files must be mono or stereo at a sample rate that is a multiple of 100 Hz (32, 44.1, 48, 88.2, 96, 176.4, 192 kHz); others are rejected with a message.
+* Files must be mono, stereo, 5.0, 5.1 or 7.1 at a sample rate that is a multiple of 100 Hz (32, 44.1, 48, 88.2, 96, 176.4, 192 kHz); others are rejected with a message.
+* **Surround.** The plugin accepts mono, stereo, 5.0, 5.1 and 7.1 buses and takes the layout from the host. For input or files with 3+ channels, a **layout selector** appears at the top right: *Auto* (the host's layout), the standard layout for the channel count, or *Custom...* for speakers in another order. A file without layout information shows "choose a layout" and the suggested one; picking it analyses the file again. The choice for live input is saved with the plugin state; the choice for a file is not.
 
 ---
 
@@ -233,7 +243,8 @@ Compare a mix with good references in the same genre rather than chasing a singl
 ```python
 from ada_core import analyze_file, Analyzer
 
-r = analyze_file("track.flac")
+r = analyze_file("track.flac")          # a 5.1 WAV with a channel mask works the same
+r = analyze_file("six.wav", layout=parse_layout("5.1"))   # from ada_core.layout, for files without a layout
 print(r.integrated, r.lra, r.true_peak_max, r.plr)
 print(r.summary())            # JSON-safe dict with the report fields
 
@@ -242,7 +253,7 @@ r.short_term, r.true_peak_3s  # LUFS / dBTP per 100 ms
 r.psr                         # dB per 100 ms; NaN where excluded
 
 # Streaming from your own source (blocks of any length, shape (frames, channels))
-a = Analyzer(48000, 2)
+a = Analyzer(48000, 2)                     # or Analyzer(48000, 6, layout=get_layout("5.1"))
 for block in blocks:
     a.process(block)
 result = a.finish()

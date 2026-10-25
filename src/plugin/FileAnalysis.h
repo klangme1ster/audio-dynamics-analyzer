@@ -62,9 +62,10 @@ public:
     // File-chooser pattern for every readable format, e.g. "*.wav;*.flac;...;*.m4a"
     juce::String wildcard() const { return formats.getWildcardForAllFormats(); }
 
-    // The layout the file itself declares: the channel mask of a WAVE_FORMAT_EXTENSIBLE WAV, or
-    // mono / stereo for one or two channels. nullopt if there is none, or it is not 5.0 / 5.1 /
-    // 7.1. Other readers' guesses (JUCE assumes 5.1 for any six channels) are not trusted.
+    // The layout the file itself declares: the speaker mask a reader reports as "ChannelMask" (a
+    // WAVE_FORMAT_EXTENSIBLE WAV, M4A / AAC through Media Foundation), or mono / stereo for one or
+    // two channels. nullopt if there is none, or it is not 5.0 / 5.1 / 7.1. JUCE's own guess
+    // (5.1 for any six channels) is not trusted.
     static std::optional<ChannelLayout> detectLayout (juce::AudioFormatReader& reader);
 
     // Decodes `reader` in blocks and feeds the engine. Blocking; used by the worker and by tests.

@@ -243,6 +243,7 @@ def analyse_both(case: str, tmp_path: Path, codec: str, sample_format: str, fs: 
     # the container's priming is dropped and the length is the same
     assert cpp["frames"] == py.frames
     assert cpp["sample_rate"] == fs and cpp["channels"] == channels
+    assert (cpp["layout"], cpp["channel_roles"]) == (py.layout, py.channel_roles)
     return py, cpp
 
 
@@ -252,6 +253,9 @@ M4A_CASES = {  # name: (codec, sample format, fs, channels, encoder options[, fi
     "adts-44k-stereo": ("aac", "fltp", 44100, 2, {"aac_pns": "0"}, ".aac"),
     "aac-48k-mono": ("aac", "fltp", 48000, 1, {"aac_pns": "0"}),
     "alac-48k-stereo": ("alac", "s16p", 48000, 2, None),
+    # surround: the layout comes from the stream's channel configuration (Media Foundation's speaker mask);
+    # PyAV cannot encode 8 channels, so 7.1 AAC has no case here
+    "aac-48k-5.1": ("aac", "fltp", 48000, 6, {"aac_pns": "0"}),
 }
 
 
@@ -354,3 +358,20 @@ def test_surround_wav_file_without_layout_is_refused(tmp_path):
     write_wavex(path, 0.1 * surround_noise("L,R,C,LFE,Ls,Rs")[:48000], 0)
     out = subprocess.run([str(FILE_CLI), str(path)], capture_output=True, text=True)
     assert out.returncode != 0 and "5.1" in out.stderr
+
+
+@needs_file_cli
+def test_alac_surround_needs_a_layout_in_the_file_reader(tmp_path):
+    """Media Foundation's ALAC decoder reports no speaker mask: the file reader asks for a layout."""
+    from ada_core.engine import analyze_file
+    from test_decode import write_encoded
+
+    x = np.round(song(48000, 6, 5) * 32767) / 32767
+    path = tmp_path / "alac51.m4a"
+    write_encoded(path, x, 48000, "alac", "s16p")
+    refused = subprocess.run([str(FILE_CLI), str(path)], capture_output=True, text=True)
+    assert refused.returncode != 0 and "5.1" in refused.stderr
+    out = subprocess.run([str(FILE_CLI), str(path), "--layout", "5.1"], capture_output=True, text=True, check=True)
+    cpp, py = json.loads(out.stdout), analyze_file(path)
+    assert (cpp["layout"], cpp["frames"]) == (py.layout, py.frames)
+    assert abs(cpp["summary"]["integrated_lufs"] - py.summary()["integrated_lufs"]) <= 0.02

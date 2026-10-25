@@ -76,8 +76,6 @@ std::optional<ChannelLayout> FileAnalysis::detectLayout (juce::AudioFormatReader
         return ChannelLayout::mono();
     if (channels == 2)
         return ChannelLayout::stereo();
-    if (reader.getFormatName() != "WAV file")
-        return std::nullopt;
     const auto mask = reader.metadataValues.getValue ("ChannelMask", {});
     if (mask.isEmpty())
         return std::nullopt;

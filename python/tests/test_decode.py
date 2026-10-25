@@ -21,7 +21,7 @@ def write_encoded(path, x: np.ndarray, fs: int, codec: str, sample_format: str,
     options are encoder options, e.g. {"aac_pns": "0"} (FFmpeg's AAC encoder uses perceptual
     noise substitution by default: the decoder generates that noise, so peaks depend on it).
     """
-    layout = "stereo" if x.shape[1] == 2 else "mono"
+    layout = {1: "mono", 2: "stereo", 5: "5.0", 6: "5.1", 8: "7.1"}[x.shape[1]]
     planar = np.ascontiguousarray(x.T)
     if sample_format == "s16p":
         planar = np.round(planar * 32767).astype(np.int16)
