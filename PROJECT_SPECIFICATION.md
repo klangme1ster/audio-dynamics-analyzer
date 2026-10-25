@@ -1,12 +1,12 @@
 # Audio Dynamics Analyzer (ADA) — Technical Specification
 
 ## 1. Overview & Architecture
-ADA is a two-stage loudness and dynamics analysis suite for mono and stereo program material. It measures second-by-second transient density (micro-dynamics, PSR) alongside full-program dynamic range (macro-dynamics, PLR and LRA).
+ADA is a two-stage loudness and dynamics analysis suite for mono, stereo and 5.0 / 5.1 / 7.1 surround program material. It measures second-by-second transient density (micro-dynamics, PSR) alongside full-program dynamic range (macro-dynamics, PLR and LRA).
 
 * **Stage 1 — Python reference engine & batch scanner.** Multi-core CLI, target $\ge 100\times$ real-time per CPU core. Audio is streamed; memory is O(duration / 10 ms) for the metric arrays (< 10 MB per hour) plus a fixed per-chunk working set. Stage 1 is the **numerical reference** for Stage 2.
 * **Stage 2 — C++20 / JUCE 8 plugin & standalone app.** One codebase built as VST3 (DAWs, Audacity ≥ 3.2) and Standalone (faster-than-real-time drag-and-drop file analysis). The DSP engine is a direct port of the Stage 1 definitions in §3; no third-party loudness library runs in the product (libebur128 is used only as a test oracle, §2.2).
 
-**Scope:** 1 or 2 channels. Sample rates must be integer multiples of 100 Hz (so both the 100 ms bin and the 10 ms sub-bin are whole numbers of samples): 32, 44.1, 48, 88.2, 96, 176.4, 192 kHz. Other channel counts or rates are rejected with an explicit error.
+**Scope:** mono, stereo and the surround layouts of §3.11 (5.0, 5.1, 7.1). Sample rates must be integer multiples of 100 Hz (so both the 100 ms bin and the 10 ms sub-bin are whole numbers of samples): 32, 44.1, 48, 88.2, 96, 176.4, 192 kHz. Other rates are rejected with an explicit error. A multichannel source whose layout cannot be determined (§3.11) is rejected until the layout is supplied or confirmed; ADA never guesses silently.
 
 ---
 
@@ -16,7 +16,7 @@ The DSP definitions in §3 exist to pass these tests. An implementation is compl
 "Synth" = generated in the test fixture from the parameters in the referenced document. "File" = official WAV from the EBU loudness test set, stored under `python/tests/fixtures/ebu/` (not committed; tests `skip` with a message when absent). "Live" = requires real-time streaming, tested only in Stage 2.
 
 ### 2.1 External compliance signals (EBU Tech 3341 V4, Tech 3342 V4)
-Levels are sine **peak** levels in dBFS, applied to both channels of a stereo signal.
+Levels are sine **peak** levels in dBFS, applied to both channels of a stereo signal (case 6: per channel as listed in the file).
 
 | ID | Source | Signal | Metric | Expected | Tolerance |
 |---|---|---|---|---|---|
@@ -25,6 +25,7 @@ Levels are sine **peak** levels in dBFS, applied to both channels of a stereo si
 | T3341-3 | case 3 | Synth: −36 / −23 / −36 dBFS, 10 / 60 / 10 s | I | −23.0 LUFS | ±0.1 LU |
 | T3341-4 | case 4 | Synth: −72 / −36 / −23 / −36 / −72 dBFS, 10 / 10 / 60 / 10 / 10 s | I (absolute gate) | −23.0 LUFS | ±0.1 LU |
 | T3341-5 | case 5 | Synth: −26 / −20 / −26 dBFS, 20 / 20.1 / 20 s | I (relative gate) | −23.0 LUFS | ±0.1 LU |
+| T3341-6 | case 6 | File: 5.0 (`seq-3341-6-5channels`, order L R C Ls Rs; layout supplied) and 5.1 (`seq-3341-6-6channels-WAVEEX`, silent LFE; layout read from the channel mask `0x3F`). Peaks L/R −28, C −24, Ls/Rs −30 dBFS | I, Max M, Max S (S on the 10 ms sub-grid for t ≥ 3 s) | −23.0 LUFS | ±0.1 LU |
 | T3341-7, -8 | cases 7, 8 | File: authentic programme | I | −23.0 LUFS | ±0.1 LU |
 | T3341-9 | case 9 | Synth: (1.34 s at −20; 1.66 s at −30 dBFS) × 5 | S on 10 ms sub-grid (§3.4), every value for t ≥ 3 s; Max S | −23.0 LUFS | ±0.1 LU |
 | T3341-10 | case 10 | File | Max S (10 ms sub-grid) | −23.0 LUFS | ±0.1 LU |
@@ -42,7 +43,7 @@ Levels are sine **peak** levels in dBFS, applied to both channels of a stereo si
 | T3342-5 | case 5 | File: authentic programme | LRA | 5 LU | ±1 LU |
 | T3342-6 | case 6 | File: authentic programme | LRA | 15 LU | ±1 LU |
 
-Tech 3341 case 6 (5.0 channel) is out of scope (§1). ITU-R BS.2217 compliance files may be added as further "File" rows once obtained; no BS.2217 signal is synthesized.
+ITU-R BS.2217 compliance files may be added as further "File" rows once obtained; no BS.2217 signal is synthesized.
 
 ### 2.2 ADA-specific tests
 | ID | Purpose | Signal | Pass condition |
@@ -58,10 +59,16 @@ Tech 3341 case 6 (5.0 channel) is out of scope (§1). ITU-R BS.2217 compliance f
 | ADA-WARMUP | Warm-up & silence | (a) 2 s file; (b) 30 s file with 10 s digital silence in the middle | (a) PSR stats = n/a, LRA = n/a; (b) silent bins excluded from PSR stats; no ±inf/NaN in any report field |
 | ADA-CEIL | Peak density near the ceiling | (a) stereo 1 kHz −20 dBFS, 20 s; (b) −20 / −30 dBFS, 20 s each; (c) 2 s file | (a) 100 %; (b) 171 / 371 = 46.1 ±0.3 %; (c) n/a |
 | ADA-M4A | M4A / AAC decoding | (a) 10 s 16-bit noise + tone as WAV and ALAC M4A; (b) 1 kHz −23 dBFS, 20 s, AAC 256 kbit/s, mono and stereo | (a) all arrays and report fields identical (≤ 1e-9); (b) duration 20 s ±30 ms, I = −23.0 (stereo) / −26.0 (mono) ±0.1 LUFS |
+| ADA-SURR-W | Surround channel weights | 5.1 and 7.1, 1 kHz sine, −23 dBFS, 20 s on **one** channel, the others silent; once per channel | I = −26.0 (L, R, C) / −24.51 (Ls, Rs, Lb, Rb) ±0.1 LUFS; LFE alone: I `n/a` (silent) |
+| ADA-LFE | LFE exclusion | 5.1: −30 dBFS pink noise bed on the other channels; run once with the LFE silent and once with 50 Hz at 0 dBFS in the LFE | All per-bin and per-sub-bin arrays and report fields identical (≤ 1e-9); a sample peak of 0 dBFS in the LFE does not change $\text{TP}_{\max}$ |
+| ADA-SURR-TP | Surround true peak | 7.1, ADA-ISP signal (§2.2) on one channel at a time, others silent | $\text{TP}_{\max}$ = +3.01 dBTP, +0.2 / −0.4 dB for every channel except the LFE (ignored) |
+| ADA-NOFOLD | No downmix | 5.1: identical −23 dBFS 1 kHz on L and R, once in phase and once with R inverted (everything else silent) | I identical (≤ 1e-9), and equal to ADA-SURR-W's L-alone reading + 3.01 LU (two channels) ±0.05 |
+| ADA-LAYOUT | Layout resolution (§3.11) | (a) 6- and 8-channel WAV with `WAVE_FORMAT_EXTENSIBLE` masks `0x3F`, `0x60F` (5.1) and `0x63F` (7.1); (b) 5-, 6-, 8-channel PCM WAV without mask; (c) 3, 4, 7 channels without mask; (d) user-supplied role list in permuted order; (e) layout whose role count differs from the channel count | (a) layout and weights follow the mask; (b) rejected with an error naming the suggested layout (5.0 / 5.1 / 7.1); accepted when that layout is supplied or confirmed; (c) rejected, no suggestion; (d) results identical (≤ 1e-9) to the same signal in file order with the matching role list; (e) rejected |
+| ADA-SURR-CHUNK | Chunk invariance, multichannel | ADA-CHUNK sizes on 5.1 pink noise | As ADA-CHUNK |
 | ADA-PLOT | Plot geometry | Any result; 2160 / 1200 / 1000 px at 16:10 / 4:3 / 2:1; PDF and SVG | PNG is exactly width × width/aspect pixels; vector formats render |
 | ADA-MEM | Memory bound | 60 min stereo 48 kHz WAV, streamed from disk | `tracemalloc` peak < 64 MB **and** process RSS growth < 128 MB during analysis |
 | ADA-PERF | Throughput | Same 60 min WAV | ≥ 100× real-time on one core, including decode (benchmark marker, not run in CI by default) |
-| ADA-PARITY | Stage 1 ↔ Stage 2 | All Synth signals above plus one MP3 and one FLAC file, through the C++ engine's test executable; M4A (Windows): 15 s drum-like test signal as AAC 256 kbit/s (stereo 44.1 kHz, mono 48 kHz; encoded without PNS) and ALAC, through the plugin's file reader (`ada_file_cli`) | per-bin $M$, $S$, $\text{TP}_{3s}$, PSR within 0.01 dB; $I$ within 0.02 LU; LRA within 0.05 LU; $\text{TP}_{\max}$ within 0.01 dB; M4A: same frame count (priming removed by both). AAC with PNS: only $S$ (0.05 dB), $I$ and LRA are compared, since the decoder generates the substituted noise |
+| ADA-PARITY | Stage 1 ↔ Stage 2 | All Synth signals above (including 5.1 and 7.1 pink-noise and tone signals with an active LFE) plus one MP3 and one FLAC file, through the C++ engine's test executable; M4A (Windows): 15 s drum-like test signal as AAC 256 kbit/s (stereo 44.1 kHz, mono 48 kHz; encoded without PNS) and ALAC, through the plugin's file reader (`ada_file_cli`) | per-bin $M$, $S$, $\text{TP}_{3s}$, PSR within 0.01 dB; $I$ within 0.02 LU; LRA within 0.05 LU; $\text{TP}_{\max}$ within 0.01 dB; M4A: same frame count (priming removed by both). AAC with PNS: only $S$ (0.05 dB), $I$ and LRA are compared, since the decoder generates the substituted noise |
 | ADA-ORACLE | Independent cross-check (C++) | T3341-1…5 signals through libebur128 (test build only) | ADA and libebur128 $I$ agree within 0.1 LU |
 | ADA-RT-ALLOC | Real-time safety (C++) | 10 min of random-length host blocks (1–4096 frames), with resets and transport toggles | Zero calls to global `operator new` / `operator delete` (and, in MSVC debug builds, zero `_CrtSetAllocHook` events) inside `processBlock()` after `prepareToPlay()` |
 | ADA-RT-RESET | Reset correctness (C++) | Reset at random sample positions during T3341-3 | After reset, metrics equal a fresh engine started at the next bin boundary |
@@ -74,7 +81,7 @@ Tech 3341 case 6 (5.0 channel) is out of scope (§1). ITU-R BS.2217 compliance f
 * $f_s$ sample rate. **Bin** $H = f_s/10$ samples (100 ms); **sub-bin** $h = f_s/100$ samples (10 ms). Input sample index $k = 0, 1, \dots$; bin $n$ covers $[nH, (n+1)H)$, sub-bin $u$ covers $[uh, (u+1)h)$.
 * Per-bin metrics are stamped $t_n = (n+1)\cdot 0.1$ s, the **end** of bin $n$.
 * Only complete bins are emitted. A trailing partial bin at end of stream contributes to $\text{TP}_{\max}$ only (consistent with BS.1770 discarding incomplete blocks).
-* Channel weights: mono $N = 1$, $G_1 = 1.0$ (never summed as dual-mono). Stereo $N = 2$, $G_1 = G_2 = 1.0$.
+* Channel weights: mono $N = 1$, $G_1 = 1.0$ (never summed as dual-mono). Stereo $N = 2$, $G_1 = G_2 = 1.0$. Surround: per channel role as in §3.11 ($G = 1.0$ for L, R, C; $G = 1.41$ for the surround and rear channels); the LFE is not measured. Channels are never folded down; their weighted powers are summed.
 
 ### 3.2 K-weighting (ITU-R BS.1770-5, unchanged from -4)
 Two cascaded biquads (second-order sections), state initialized to **zero** at stream start or reset (not `sosfilt_zi`, which assumes a pre-existing steady state). Computed in float64.
@@ -144,7 +151,24 @@ $$100 \cdot \frac{|\{n \in \text{gated} : P[n] \ge \text{TP}_{\max,\text{lin}} \
 Brickwall limiting and clipping stack peaks at the ceiling and push this towards 100 %; open material stays low. `n/a` when no bin passes the gate or the file is digital silence.
 
 ### 3.10 Report fields (per file)
-$I$, LRA, $\text{TP}_{\max}$ (dBTP), PLR, Max M, Max S, Min / Mean / P10 PSR (Mean = arithmetic mean of gated dB values; P10 with the §3.6 index rule), peak density near the ceiling (§3.9), percentage of gated duration per PSR zone, duration, sample rate, channels, $L$. Undefined values are `null` in JSON and empty in CSV.
+$I$, LRA, $\text{TP}_{\max}$ (dBTP), PLR, Max M, Max S, Min / Mean / P10 PSR (Mean = arithmetic mean of gated dB values; P10 with the §3.6 index rule), peak density near the ceiling (§3.9), percentage of gated duration per PSR zone, duration, sample rate, channels, layout (name and role list, §3.11), $L$. Undefined values are `null` in JSON and empty in CSV.
+
+### 3.11 Channel layouts
+A **layout** is an ordered list of channel roles, one per input channel. Roles: `L`, `R`, `C`, `LFE`, `Ls`, `Rs` (left / right surround), `Lb`, `Rb` (left / right rear).
+
+| Layout | Channels | Roles in file order |
+|---|---|---|
+| mono | 1 | `C` (G = 1.0) |
+| stereo | 2 | `L R` |
+| 5.0 | 5 | `L R C Ls Rs` (the order of the EBU case-6 file) |
+| 5.1 | 6 | `L R C LFE Ls Rs` (WAV order; the masks `0x3F` (back pair) and `0x60F` (side pair) both map here, the pair taking the roles `Ls Rs`) |
+| 7.1 | 8 | `L R C LFE Lb Rb Ls Rs` (WAV order, mask `0x63F`) |
+
+* **Weights:** $G = 1.0$ for `L`, `R`, `C`; $G = 1.41$ (+1.5 dB) for `Ls`, `Rs`, `Lb`, `Rb`; the `LFE` is excluded from the loudness sum (BS.1770). Excluded channels are not filtered and do not enter $E_i$.
+* **True peak:** the maximum over all channels except the LFE (§3.3). The LFE does not influence any report field (ADA-LFE).
+* **Resolution order:** (1) a layout supplied by the user (`--layout NAME` or an explicit role list such as `L,R,C,LFE,Ls,Rs`; in the GUI a layout selector) overrides everything; (2) the container's channel mask or layout where it has one (WAVE_FORMAT_EXTENSIBLE `dwChannelMask`, FLAC / Ogg channel mask, PyAV layout, host bus layout, WASAPI speaker mask); (3) otherwise a multichannel source is **rejected**, and the error names the most plausible layout for the channel count (5 → 5.0, 6 → 5.1, 8 → 7.1; no suggestion for other counts). The suggestion is only a proposal: it is applied once the user passes it via `--layout` or confirms it in the GUI. The role list is always shown with the result so a wrong mapping is visible.
+* **Validation:** the role count must equal the channel count, roles must be unique, and a layout needs at least one non-LFE channel; otherwise it is rejected with an explicit error.
+* Mono and stereo files need no layout and behave exactly as before (ADA-MONO, all T3341 / T3342 rows).
 
 ---
 
@@ -160,8 +184,9 @@ $I$, LRA, $\text{TP}_{\max}$ (dBTP), PLR, Max M, Max S, Min / Mean / P10 PSR (Me
 * **History:** a pre-allocated ring of 54 000 frames (90 min at 10 Hz) on the message thread, owned by the processor so it keeps filling while the editor is closed; older frames are overwritten. It also keeps the live PSR statistics since reset (minimum, P10 from a 0.1 dB histogram, zone shares), which therefore cover the whole measurement even beyond 90 minutes.
 * **Live analysis switch** (`liveAnalysis`, default on): when off, `processBlock()` keeps tracking the transport but does not feed the engine. **Standalone output** ("Play input to output", off at every start and not saved, so a restart never begins with feedback): the standalone app clears its output unless the input is to be played, so it can measure the input without feedback; a plugin in a DAW always passes audio through unchanged.
 * **Delivery targets:** `ada::deliveryTargets` / `ada::evaluateTarget` (`src/engine/DeliveryTargets.h`) compare the integrated loudness and max true peak of the current view with a chosen target (streaming: deviations are warnings, the service turns louder tracks down; broadcast: deviations outside the tolerance are problems). Spotify's stricter −2 dBTP ceiling applies to masters louder than −14 LUFS. The plugin judges the values as displayed (rounded to 0.1 dB); limits are inclusive. The selection (by preset name) and custom values are saved with the plugin state.
-* **Windows output capture** (standalone app on Windows): `ada::OutputMonitor` (`src/plugin/OutputMonitor.cpp`) opens a render endpoint with WASAPI in shared loopback mode, converts the mix (float32 / PCM 16, 24, 32 bit; first two channels) with `ada::interleavedToPlanar` and feeds its own `DynamicsEngine` on a capture thread; frames reach the message thread through a lock-free FIFO and fill a separate 90-minute history. While the device plays nothing Windows delivers no packets; silence is then filled in from the clock so the time axis keeps running. ASIO playback bypasses the Windows mixer and is not captured.
-* **Offline file analysis** (standalone app and plugin): a separate `DynamicsEngine` on a background thread decodes the file with JUCE's readers at full speed. Frames reach the message thread through a lock-free FIFO (the worker waits when it is full) and fill a per-file history (sized from `lengthInSamples` + 5 %, since the length is an estimate for compressed formats; the graph keeps at most 6 h) plus a complete frame list, from which `ada::summarize` computes the file's report fields exactly as Stage 1 does. Only mono/stereo files at a multiple of 100 Hz are accepted.
+* **Windows output capture** (standalone app on Windows): `ada::OutputMonitor` (`src/plugin/OutputMonitor.cpp`) opens a render endpoint with WASAPI in shared loopback mode, converts the mix (float32 / PCM 16, 24, 32 bit; the endpoint's speaker mask gives the §3.11 layout) with `ada::interleavedToPlanar` and feeds its own `DynamicsEngine` on a capture thread; frames reach the message thread through a lock-free FIFO and fill a separate 90-minute history. While the device plays nothing Windows delivers no packets; silence is then filled in from the clock so the time axis keeps running. ASIO playback bypasses the Windows mixer and is not captured.
+* **Channels and layouts:** `DynamicsEngine::prepare(sampleRate, layout)` takes the §3.11 layout; per-channel weights and the excluded LFE are fixed at `prepare()` (`maxChannels` = 8, state arrays fixed-size, no allocation in `process()`). Bus layouts offered by the plugin: mono, stereo, 5.0, 5.1, 7.1. A layout the host cannot report is never guessed on the audio thread; the editor shows the channel count with a layout selector (default: the §3.11 suggestion, marked unconfirmed until the user accepts it).
+* **Offline file analysis** (standalone app and plugin): a separate `DynamicsEngine` on a background thread decodes the file with JUCE's readers at full speed. Frames reach the message thread through a lock-free FIFO (the worker waits when it is full) and fill a per-file history (sized from `lengthInSamples` + 5 %, since the length is an estimate for compressed formats; the graph keeps at most 6 h) plus a complete frame list, from which `ada::summarize` computes the file's report fields exactly as Stage 1 does. Mono, stereo and surround files at a multiple of 100 Hz are accepted; a multichannel file without a channel mask asks for a layout (§3.11).
 
 ---
 

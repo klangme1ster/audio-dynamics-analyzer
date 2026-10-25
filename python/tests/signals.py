@@ -95,3 +95,18 @@ def t3342_case(case: int, fs: int = 48000) -> np.ndarray:
         4: [(20, -50.0), (20, -35.0), (20, -20.0), (20, -35.0), (20, -50.0)],
     }[case]
     return tone_sequence(fs, seq)
+
+
+def multichannel(frames: int, roles: tuple[str, ...], sources: dict[str, np.ndarray]) -> np.ndarray:
+    """(frames, len(roles)) array with the given 1-D sources on their roles, silence elsewhere."""
+    x = np.zeros((frames, len(roles)))
+    for role, src in sources.items():
+        x[:, roles.index(role)] = src
+    return x
+
+
+def tone_on(roles: tuple[str, ...], role: str, fs: int, seconds: float = 20.0,
+            level_db: float = -23.0, freq: float = 1000.0) -> np.ndarray:
+    """1 kHz sine on one channel role of a multichannel signal, all others silent (ADA-SURR-W)."""
+    tone = sine(fs, seconds, level_db, freq, channels=1)[:, 0]
+    return multichannel(len(tone), roles, {role: tone})

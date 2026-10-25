@@ -14,9 +14,13 @@ from ada_core.engine import Analyzer, Result  # noqa: E402
 EBU_DIR = Path(__file__).parent / "fixtures" / "ebu"
 
 
-def analyze_array(x: np.ndarray, fs: int, chunk_frames: int | None = None) -> Result:
-    """Run the engine on an in-memory signal, optionally in fixed-size chunks."""
-    a = Analyzer(fs, x.shape[1])
+def analyze_array(x: np.ndarray, fs: int, chunk_frames: int | None = None,
+                  layout=None) -> Result:
+    """Run the engine on an in-memory signal, optionally in fixed-size chunks.
+
+    layout: a ChannelLayout (or None for mono / stereo), spec §3.11.
+    """
+    a = Analyzer(fs, x.shape[1], layout) if layout is not None else Analyzer(fs, x.shape[1])
     step = chunk_frames or len(x) or 1
     for i in range(0, len(x), step):
         a.process(x[i:i + step])

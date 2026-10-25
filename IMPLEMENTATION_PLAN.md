@@ -111,13 +111,32 @@ Test IDs (T3341-*, T3342-*, ADA-*) refer to §2 of `PROJECT_SPECIFICATION.md`. E
 
 ---
 
+## Phase 5: Surround (5.0, 5.1, 7.1) — branch `feature/surround`
+Spec: §1 scope, §2.1 T3341-6, §2.2 ADA-SURR-W / ADA-LFE / ADA-SURR-TP / ADA-NOFOLD / ADA-LAYOUT / ADA-SURR-CHUNK, §3.1, §3.11. Tests first, Python before C++.
+- [x] **5.1 Spec and tests (Python)** — spec changes above; `python/tests/test_surround.py` (new), T3341-6 rows in `test_compliance.py`, `multichannel` / `tone_on` in `signals.py`, `layout` argument in `conftest.analyze_array`. The EBU case-6 files (`seq-3341-6-5channels`, `seq-3341-6-6channels-WAVEEX`) come with the EBU test set already used by `fetch_ebu_testset.py`. State at the end of this step: the new tests fail (`ada_core.layout` does not exist yet), everything else passes.
+- [ ] **5.2 Layouts (`ada_core/layout.py`)** → ADA-LAYOUT
+  - `ChannelLayout(roles)` with `name`, `channels`, `weights` (LFE = 0, not measured); `get_layout`, `parse_layout` (name or role list; the standard order keeps its name), `layout_from_mask` (WAV `dwChannelMask`), `suggest_layout(channels)` (5 → 5.0, 6 → 5.1, 8 → 7.1, else `None`), `resolve_layout(channels, mask=None, override=None)`; unresolved multichannel raises `ValueError` naming the suggestion.
+  - `decode.py`: `AudioInfo.channel_mask` from the WAVE_FORMAT_EXTENSIBLE `fmt ` chunk (own small RIFF parse; libsndfile does not expose it), FLAC / Ogg masks where libsndfile gives them, PyAV layout for M4A.
+- [ ] **5.3 Engine** → ADA-SURR-W, ADA-LFE, ADA-SURR-TP, ADA-NOFOLD, ADA-SURR-CHUNK, T3341-6
+  - `Analyzer(fs, channels, layout=None)`; only measured channels are K-weighted and oversampled, weights applied when summing the sub-bin energies; `Result.layout`, `summary()` fields `layout` and `channel_roles`.
+  - `analyze_file(path, layout=None)`; `ada-scan --layout NAME|ROLES` (one layout for all multichannel files of a run; the table and exports show the layout).
+- [ ] **5.4 C++ engine** → ADA-PARITY (5.1, 7.1)
+  - `DynamicsEngine::prepare(fs, layout)`, `maxChannels` = 8, weights and the measured-channel mask fixed at `prepare()`; `gen_cpp_tables.py` unchanged (weights are not generated constants). Parity signals in `python/tests/test_parity.py` and `ada_cli` (layout argument).
+- [ ] **5.5 Sources and GUI**
+  - File analysis (`FileAnalysis.cpp`): JUCE channel layouts → §3.11 roles; a file without a layout asks for one.
+  - Plugin bus layouts (`isBusesLayoutSupported`): mono, stereo, 5.0, 5.1, 7.1; layout selector in the editor with the suggestion marked unconfirmed until accepted; the layout is saved with the state.
+  - Windows output source: WASAPI speaker mask → layout (replaces "front L/R only"); `ada_view_snapshot` and the README screenshot only if the GUI changes visibly.
+- [ ] **5.6 Docs** — README and USAGE ("How channels are measured"): supported layouts, weights, LFE, how to supply or confirm a layout; this plan's open items.
+
+---
+
 ## Status and open items
 As of 2026-10-25 all phases above are done. v0.1.0 was released from `ad56ed8` (Windows x64 zip: VST3 + standalone app, built and tested by `.github/workflows/release.yml`).
 
 Channel handling (spec §1 scope, BS.1770): mono and stereo only, in the Python engine, the plugin bus layouts (`isBusesLayoutSupported`) and file analysis. Stereo is K-weighted per channel and the powers are summed with $G_i = 1.0$ (`DynamicsEngine::processFrame`), never folded down to mono; true peak is the maximum over channels. Mono is $N = 1$, not dual-mono (ADA-MONO). The Windows output source (4.6) takes only the front L/R of surround devices.
 
 Open:
-- [ ] **Surround (5.1, 7.1).** BS.1770 weights: 1.0 for L, R, C; 1.41 for the surround channels; LFE excluded. Needs a channel-layout mapping per source (file channel masks, host bus layouts, WASAPI speaker masks), a spec §1/§2 change (scope and new compliance tests, e.g. the multichannel cases of the EBU loudness test set) and the same change in Python and C++ (ADA-PARITY).
+- [ ] **Surround (5.0, 5.1, 7.1)** — in progress, see Phase 5. BS.1770 weights: 1.0 for L, R, C; 1.41 for the surround channels; LFE excluded. Needs a channel-layout mapping per source (file channel masks, host bus layouts, WASAPI speaker masks), a spec §1/§2 change (scope and new compliance tests, e.g. the multichannel cases of the EBU loudness test set) and the same change in Python and C++ (ADA-PARITY).
 - [ ] **MP3 parity** of JUCE's decoder against the Python decoder (see 3.6).
 - [ ] **macOS builds**, including M4A through JUCE's Core Audio reader (see 3.6); a CI job would be the first check.
 - [ ] **Delivery targets:** check the platform values against current documentation before the next release (see 4.5).
