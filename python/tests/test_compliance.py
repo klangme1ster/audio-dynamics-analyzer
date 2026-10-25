@@ -108,3 +108,26 @@ def test_t3341_file_true_peak(case):
 def test_t3342_file_lra(case, expected):
     for path in ebu_files(t3342_regex(case)):
         assert analyze_file(path).lra == pytest.approx(expected, abs=1.0), path.name
+
+
+# --- Tech 3341 case 6: 5.0 / 5.1 (surround, spec §3.11) -----------------------
+
+def test_t3341_6_five_channels_with_supplied_layout():
+    f = ebu_files(r"3341-6-5channels")[0]
+    with pytest.raises(ValueError, match="5.0"):  # no channel mask: rejected, 5.0 suggested
+        analyze_file(f)
+    r = analyze_file(f, layout="5.0")
+    assert r.channels == 5
+    assert r.integrated == pytest.approx(-23.0, abs=TOL_LU)
+    assert r.max_momentary == pytest.approx(-23.0, abs=TOL_LU)
+    assert r.max_short_term == pytest.approx(-23.0, abs=TOL_LU)
+
+
+def test_t3341_6_wavex_layout_from_channel_mask():
+    f = ebu_files(r"3341-6-6channels-WAVEEX")[0]
+    r = analyze_file(f)  # mask 0x3F: 5.1, no layout argument needed
+    assert (r.channels, r.layout) == (6, "5.1")
+    assert r.integrated == pytest.approx(-23.0, abs=TOL_LU)
+    # the silent LFE must not change anything relative to the 5.0 file
+    r5 = analyze_file(ebu_files(r"3341-6-5channels")[0], layout="5.0")
+    np.testing.assert_allclose(r.short_term, r5.short_term, rtol=0, atol=1e-9, equal_nan=True)

@@ -2,7 +2,9 @@
 // including the Media Foundation M4A / AAC reader on Windows) and print per-bin metrics and the
 // summary as JSON. Used by python/tests/test_parity.py for decoded formats (spec ADA-PARITY).
 //
-//   ada_file_cli <file> [--dump <out.f32>]   (--dump also writes the decoded samples, float32 interleaved)
+//   ada_file_cli <file> [--layout <5.0|5.1|7.1|role list>] [--dump <out.f32>]
+// --layout overrides the layout the file declares (needed above 2 channels without one);
+// --dump also writes the decoded samples, float32 interleaved.
 
 #include "CliJson.h"
 #include "FileAnalysis.h"
@@ -26,7 +28,7 @@ int main (int argc, char** argv)
 {
     if (argc < 2)
     {
-        std::cerr << "usage: ada_file_cli <file>\n";
+        std::cerr << "usage: ada_file_cli <file> [--layout L] [--dump out.f32]\n";
         return 2;
     }
     const juce::File file (juce::File::getCurrentWorkingDirectory().getChildFile (arg (argv[1])));
@@ -39,10 +41,36 @@ int main (int argc, char** argv)
                   << (ada::mediaFoundationAvailable() ? "available" : "not available") << ")\n";
         return 1;
     }
+    std::optional<ada::ChannelLayout> layout;
+    juce::String dumpPath;
+    for (int i = 2; i < argc; ++i)
+    {
+        const auto name = arg (argv[i]);
+        if (name == "--layout" && i + 1 < argc)
+        {
+            layout = ada::ChannelLayout::parse (arg (argv[++i]).toStdString());
+            if (! layout)
+            {
+                std::cerr << "invalid layout " << arg (argv[i]).toRawUTF8() << "\n";
+                return 2;
+            }
+        }
+        else if (name == "--dump" && i + 1 < argc)
+            dumpPath = arg (argv[++i]);
+    }
+    if (! layout)
+        layout = ada::FileAnalysis::detectLayout (*reader);
+    if (! layout)
+    {
+        const auto suggestion = ada::ChannelLayout::suggest ((int) reader->numChannels);
+        std::cerr << reader->numChannels << "-channel file without a channel layout; pass --layout"
+                  << (suggestion ? " (suggested: " + suggestion->name() + ")" : std::string()) << "\n";
+        return 1;
+    }
     ada::DynamicsEngine probe; // for the oversampling factor only
     try
     {
-        probe.prepare (reader->sampleRate, (int) reader->numChannels);
+        probe.prepare (reader->sampleRate, *layout);
     }
     catch (const std::exception& e)
     {
@@ -52,16 +80,16 @@ int main (int argc, char** argv)
 
     ada::cli::Collect sink;
     bool decodeFailed = false;
-    const auto final = ada::FileAnalysis::analyseReader (*reader, sink, [] { return false; }, nullptr, &decodeFailed);
+    const auto final = ada::FileAnalysis::analyseReader (*reader, sink, [] { return false; }, nullptr, &decodeFailed, layout);
     if (! final)
     {
         std::cerr << "decoding failed: " << arg (argv[1]).toRawUTF8() << "\n";
         return 1;
     }
     std::cerr << "reader: " << reader->getFormatName() << "\n";
-    if (argc > 3 && arg (argv[2]) == "--dump") // decoded samples, float32 interleaved
+    if (dumpPath.isNotEmpty()) // decoded samples, float32 interleaved
     {
-        juce::FileOutputStream out (juce::File::getCurrentWorkingDirectory().getChildFile (arg (argv[3])));
+        juce::FileOutputStream out (juce::File::getCurrentWorkingDirectory().getChildFile (dumpPath));
         out.setPosition (0);
         out.truncate();
         const int ch = (int) reader->numChannels;
@@ -75,6 +103,6 @@ int main (int argc, char** argv)
                     out.writeFloat (buffer.getSample (c, i));
         }
     }
-    ada::cli::printResult (sink.frames, *final, probe.oversamplingFactor(), reader->sampleRate, (int) reader->numChannels);
+    ada::cli::printResult (sink.frames, *final, probe.oversamplingFactor(), reader->sampleRate, probe.layout());
     return 0;
 }

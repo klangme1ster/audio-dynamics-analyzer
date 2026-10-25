@@ -5,6 +5,7 @@
 
 #include "FileAnalysis.h"
 #include "MediaFoundationFormat.h"
+#include "PluginLayout.h"
 #include "Summary.h"
 #include "TestSupport.h"
 
@@ -347,4 +348,164 @@ TEST_CASE ("Raw AAC (ADTS) length is counted from the frame headers")
     cut.setSize (cut.getSize() - 50);
     CHECK (adtsSamples (cut, 44100.0) == std::optional<juce::int64> (1024));
     CHECK (! adtsSamples (text ("RIFF....WAVEfmt "), 44100.0).has_value());
+}
+
+// --- Surround files (spec 3.11): the layout comes from the WAV channel mask --------------------------
+
+namespace
+{
+// One tone per channel at different levels, so that a wrong role or order changes the result
+Signal surroundSignal (int channels)
+{
+    Signal s { 48000.0, {} };
+    for (int ch = 0; ch < channels; ++ch)
+        s.channels.push_back (toneSequence (48000, { { 12, -20.0 - 3.0 * ch } }, 1).channels[0]);
+    return s;
+}
+
+void writeSurround (const juce::File& file, const Signal& s, const juce::AudioChannelSet& set)
+{
+    file.deleteFile();
+    std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (file);
+    juce::WavAudioFormat wav;
+    const auto options = juce::AudioFormatWriterOptions{}
+                             .withSampleRate (s.fs)
+                             .withChannelLayout (set)
+                             .withBitsPerSample (24);
+    auto writer = wav.createWriterFor (stream, options);
+    REQUIRE (writer != nullptr);
+    REQUIRE (writer->writeFromFloatArrays (s.pointers().data(), (int) s.channels.size(), (int) s.frames()));
+}
+
+// speakers in WAV order: L R C LFE Lb Rb Ls Rs (mask 0x63F)
+juce::AudioChannelSet wav71()
+{
+    juce::AudioChannelSet set;
+    for (auto t : { juce::AudioChannelSet::left, juce::AudioChannelSet::right, juce::AudioChannelSet::centre,
+                    juce::AudioChannelSet::LFE, juce::AudioChannelSet::leftSurround, juce::AudioChannelSet::rightSurround,
+                    juce::AudioChannelSet::leftSurroundSide, juce::AudioChannelSet::rightSurroundSide })
+        set.addChannel (t);
+    return set;
+}
+
+std::unique_ptr<juce::AudioFormatReader> openReader (const juce::File& file)
+{
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    return std::unique_ptr<juce::AudioFormatReader> (formats.createReaderFor (file));
+}
+} // namespace
+
+TEST_CASE ("Surround WAV: the layout is taken from the channel mask and analysed like the engine does")
+{
+    struct Case { const char* name; juce::AudioChannelSet set; ada::ChannelLayout layout; };
+    for (const auto& c : { Case { "5.0", juce::AudioChannelSet::create5point0(), ada::ChannelLayout::surround50() },
+                           Case { "5.1", juce::AudioChannelSet::create5point1(), ada::ChannelLayout::surround51() },
+                           Case { "7.1", wav71(), ada::ChannelLayout::surround71() } })
+    {
+        CAPTURE (c.name);
+        const auto s = surroundSignal (c.layout.count);
+        const auto file = tempDir().getChildFile (juce::String ("surround-") + c.name + ".wav");
+        writeSurround (file, s, c.set);
+
+        auto reader = openReader (file);
+        REQUIRE (reader != nullptr);
+        const auto detected = ada::FileAnalysis::detectLayout (*reader);
+        REQUIRE (detected.has_value());
+        CHECK (*detected == c.layout);
+
+        CollectingSink sink;
+        const auto final = ada::FileAnalysis::analyseReader (*reader, sink, [] { return false; });
+        REQUIRE (final.has_value());
+        const auto direct = analyze (readBack (file), c.layout, 4096);
+        CHECK (sameFrames (sink.frames, direct.frames));
+        CHECK (final->truePeakMaxDBTP == direct.final.truePeakMaxDBTP);
+        reader.reset();
+        file.deleteFile();
+    }
+}
+
+TEST_CASE ("Multichannel WAV without a layout needs one: rejected with a suggestion, accepted when supplied")
+{
+    const auto s = surroundSignal (6);
+    const auto file = tempDir().getChildFile ("six-discrete.wav");
+    writeSurround (file, s, juce::AudioChannelSet::discreteChannels (6)); // no speaker information
+
+    auto reader = openReader (file);
+    REQUIRE (reader != nullptr);
+    CHECK_FALSE (ada::FileAnalysis::detectLayout (*reader).has_value());
+
+    ada::FileAnalysis fa;
+    CHECK_FALSE (fa.start (file));
+    CHECK (fa.needsLayout());
+    REQUIRE (fa.suggestedLayout().has_value());
+    CHECK (fa.suggestedLayout()->name() == "5.1");
+    CHECK (fa.errorText().contains ("5.1"));
+    CHECK (fa.errorText().containsIgnoreCase ("layout"));
+
+    // the same file with the user's choice (here the suggestion, edited: a custom order)
+    const auto custom = ada::ChannelLayout::parse ("Ls,L,Rs,C,LFE,R");
+    REQUIRE (custom.has_value());
+    CollectingSink sink;
+    const auto final = ada::FileAnalysis::analyseReader (*reader, sink, [] { return false; }, nullptr, nullptr, custom);
+    REQUIRE (final.has_value());
+    CHECK (sameFrames (sink.frames, analyze (readBack (file), *custom, 4096).frames));
+
+    CHECK (fa.start (file, ada::ChannelLayout::surround51()));
+    CHECK (fa.layout() == ada::ChannelLayout::surround51());
+    CHECK (fa.channels() == 6);
+    fa.cancel();
+
+    // a layout that does not match the channel count is refused
+    CHECK_FALSE (fa.start (file, ada::ChannelLayout::surround71()));
+    CHECK (fa.errorText().contains ("8"));
+    reader.reset();
+    file.deleteFile();
+}
+
+TEST_CASE ("Four and seven channel files stay rejected without a suggestion")
+{
+    ada::FileAnalysis fa;
+    for (int n : { 4, 7 })
+    {
+        const auto file = tempDir().getChildFile ("n" + juce::String (n) + ".wav");
+        writeSurround (file, surroundSignal (n), juce::AudioChannelSet::discreteChannels (n));
+        CHECK_FALSE (fa.start (file));
+        CHECK (fa.errorText().contains (juce::String (n) + " channels"));
+        CHECK_FALSE (fa.suggestedLayout().has_value());
+        file.deleteFile();
+    }
+}
+
+// --- Host bus layouts (plugin) ------------------------------------------------------------------------
+
+TEST_CASE ("Host channel sets map to layouts: standard speaker sets only")
+{
+    using S = juce::AudioChannelSet;
+    CHECK (*ada::layoutFromChannelSet (S::mono()) == ada::ChannelLayout::mono());
+    CHECK (*ada::layoutFromChannelSet (S::stereo()) == ada::ChannelLayout::stereo());
+    CHECK (*ada::layoutFromChannelSet (S::create5point0()) == ada::ChannelLayout::surround50());
+    CHECK (*ada::layoutFromChannelSet (S::create5point1()) == ada::ChannelLayout::surround51());
+    S sideFive; // 5.1 with side instead of back surrounds ("Music"): still Ls / Rs
+    for (auto t : { S::left, S::right, S::centre, S::LFE, S::leftSurroundSide, S::rightSurroundSide })
+        sideFive.addChannel (t);
+    CHECK (*ada::layoutFromChannelSet (sideFive) == ada::ChannelLayout::surround51());
+
+    // 7.1: the buffer order is JUCE's (by channel type), the roles follow it
+    const auto seven = ada::layoutFromChannelSet (S::create7point1());
+    REQUIRE (seven.has_value());
+    CHECK (seven->count == 8);
+    CHECK (seven->measuredCount() == 7);
+    CHECK (ada::displayName (*seven) == "7.1");
+    const auto sevenLayout = S::create7point1();
+    for (int ch = 0; ch < 8; ++ch)
+    {
+        const auto type = sevenLayout.getTypeOfChannel (ch);
+        const bool rear = type == S::leftSurroundRear || type == S::rightSurroundRear;
+        CHECK ((seven->roles[(size_t) ch] == ada::Role::Lb || seven->roles[(size_t) ch] == ada::Role::Rb) == rear);
+    }
+
+    for (const auto& set : { S::createLCR(), S::quadraphonic(), S::discreteChannels (6), S::create7point1SDDS(),
+                             S::create7point1point4(), S::disabled() })
+        CHECK_FALSE (ada::layoutFromChannelSet (set).has_value());
 }

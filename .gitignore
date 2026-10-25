@@ -13,6 +13,7 @@ out/
 
 # EBU test set (licensed, fetched on demand)
 python/tests/fixtures/ebu/
+ebu-loudness-test-set*.zip
 
 # Generated reports and plots
 reports/

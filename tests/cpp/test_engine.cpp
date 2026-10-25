@@ -240,6 +240,48 @@ TEST_CASE ("Interleaved device samples convert to planar float (Windows output c
     CHECK (m[1] == -0.7f);
 }
 
+TEST_CASE ("Output devices: layout from the speaker mask, front pair as the fallback")
+{
+    using ada::ChannelLayout;
+    auto layoutOf = [] (int channels, std::uint32_t mask) { return ada::deviceLayout (channels, mask); };
+    CHECK (layoutOf (1, 0).layout == ChannelLayout::mono());
+    CHECK (layoutOf (2, 0x3).layout == ChannelLayout::stereo());
+    CHECK (layoutOf (2, 0).layout == ChannelLayout::stereo()); // no mask: the usual stereo device
+    CHECK (layoutOf (6, 0x3F).layout == ChannelLayout::surround51());
+    CHECK (layoutOf (6, 0x60F).layout == ChannelLayout::surround51());
+    CHECK (layoutOf (8, 0x63F).layout == ChannelLayout::surround71());
+    CHECK (layoutOf (5, 0x37).layout == ChannelLayout::surround50());
+    for (const auto& d : { layoutOf (6, 0x3F), layoutOf (8, 0x63F), layoutOf (2, 0x3) })
+        CHECK (d.exact);
+
+    // not a layout ADA measures (quad, 2.1, 7.1 wide, no mask, mask for another count): front left/right only
+    for (auto [channels, mask] : { std::pair { 4, 0x33u }, std::pair { 3, 0xBu }, std::pair { 8, 0x1FFu },
+                                   std::pair { 6, 0u }, std::pair { 6, 0x63Fu } })
+    {
+        CAPTURE (channels);
+        const auto d = layoutOf (channels, mask);
+        CHECK (d.layout == ChannelLayout::stereo());
+        CHECK_FALSE (d.exact);
+    }
+}
+
+TEST_CASE ("Interleaved 5.1 device samples convert in channel order")
+{
+    constexpr int n = 4;
+    std::vector<float> in;
+    for (int i = 0; i < n; ++i)
+        for (int ch = 0; ch < 6; ++ch)
+            in.push_back ((float) (10 * ch + i));
+    std::vector<std::vector<float>> out (6, std::vector<float> (n));
+    float* dst[6];
+    for (int ch = 0; ch < 6; ++ch)
+        dst[ch] = out[(size_t) ch].data();
+    ada::interleavedToPlanar (reinterpret_cast<const std::uint8_t*> (in.data()), ada::SampleFormat::float32, 6, n, dst, 6);
+    for (int ch = 0; ch < 6; ++ch)
+        for (int i = 0; i < n; ++i)
+            CHECK (out[(size_t) ch][(size_t) i] == (float) (10 * ch + i));
+}
+
 #include "DeliveryTargets.h"
 
 TEST_CASE ("Delivery targets: loudness and peak verdicts")

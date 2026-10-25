@@ -67,6 +67,14 @@ namespace
         return device;
     }
 
+    // The speaker mask of an extensible format (0 otherwise) decides what is measured
+    DeviceLayout deviceLayout (const WAVEFORMATEX& wf)
+    {
+        const bool extensible = wf.wFormatTag == WAVE_FORMAT_EXTENSIBLE && wf.cbSize >= 22;
+        const auto mask = extensible ? (std::uint32_t) reinterpret_cast<const WAVEFORMATEXTENSIBLE&> (wf).dwChannelMask : 0u;
+        return ada::deviceLayout ((int) wf.nChannels, mask);
+    }
+
     bool sampleFormatOf (const WAVEFORMATEX& wf, SampleFormat& format)
     {
         WORD tag = wf.wFormatTag;
@@ -119,7 +127,7 @@ public:
 
     // Opens the device on the calling (message) thread to report errors and the format at once;
     // the capture itself runs on the thread.
-    bool open (juce::String& errorOut, double& rateOut, int& channelsOut)
+    bool open (juce::String& errorOut, double& rateOut, int& channelsOut, DeviceLayout& layoutOut)
     {
        #if JUCE_WINDOWS
         auto device = openDevice (deviceId);
@@ -133,6 +141,7 @@ public:
             return fail (errorOut, "Cannot read the output device's format.");
         const WAVEFORMATEX wf = *mix;
         const bool known = sampleFormatOf (*mix, format);
+        const auto found = deviceLayout (*mix);
         CoTaskMemFree (mix);
         if (! known)
             return fail (errorOut, "Unsupported output sample format.");
@@ -143,9 +152,10 @@ public:
         deviceChannels = (int) wf.nChannels;
         rateOut = rate;
         channelsOut = deviceChannels;
+        layoutOut = found;
         return true;
        #else
-        juce::ignoreUnused (rateOut, channelsOut);
+        juce::ignoreUnused (rateOut, channelsOut, layoutOut);
         return fail (errorOut, "Output capture is only available on Windows.");
        #endif
     }
@@ -192,19 +202,22 @@ private:
         const HRESULT init = client->Initialize (AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK,
                                                  bufferDuration, 0, mix, nullptr);
         const int srcChannels = (int) mix->nChannels;
+        const auto measured = deviceLayout (*mix);
         CoTaskMemFree (mix);
         ComPtr<IAudioCaptureClient> captureClient;
         if (FAILED (init) || FAILED (client->GetService (IID_PPV_ARGS (&captureClient))))
             return reportFailure ("Cannot capture the output device (loopback not available).");
 
-        const int engineChannels = (std::min) (srcChannels, DynamicsEngine::maxChannels);
-        engine.prepare (rate, engineChannels);
+        const int engineChannels = measured.layout.count;
+        engine.prepare (rate, measured.layout);
         CaptureSink sink (fifo, *this);
 
         constexpr int maxBlock = 48000;
         std::vector<float> planar ((size_t) (maxBlock * DynamicsEngine::maxChannels), 0.0f);
-        std::array<float*, DynamicsEngine::maxChannels> ptrs { planar.data(), planar.data() + maxBlock };
-        std::array<const float*, DynamicsEngine::maxChannels> cptrs { ptrs[0], ptrs[1] };
+        std::array<float*, DynamicsEngine::maxChannels> ptrs {};
+        std::array<const float*, DynamicsEngine::maxChannels> cptrs {};
+        for (int ch = 0; ch < DynamicsEngine::maxChannels; ++ch)
+            cptrs[(size_t) ch] = ptrs[(size_t) ch] = planar.data() + (size_t) ch * maxBlock;
 
         if (FAILED (client->Start()))
             return reportFailure ("Cannot start capturing the output device.");
@@ -345,8 +358,11 @@ bool OutputMonitor::start (const juce::String& id)
     ++stateChanges;
 
     auto next = std::make_unique<Capture> (id, fifo, clipThreshold);
-    if (! next->open (error, rate, deviceChannels))
+    DeviceLayout found;
+    if (! next->open (error, rate, deviceChannels, found))
         return false;
+    measuredLayout = found.layout;
+    exactLayout = found.exact;
     history.restart(); // a new capture engine: new measurement, epochs start at 0 again
     resolvedDefaultId = id.isEmpty() ? defaultEndpointId() : juce::String();
     ticksSinceDefaultCheck = 0;

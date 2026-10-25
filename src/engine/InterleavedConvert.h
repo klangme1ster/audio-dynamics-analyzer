@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ChannelLayout.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -9,8 +11,30 @@ namespace ada
 
 enum class SampleFormat { float32, int16, int24, int32 };
 
+// What to measure of an output device with `channels` channels and the speaker mask Windows
+// reports (WAVEFORMATEXTENSIBLE dwChannelMask, 0 if none). Mono, stereo and the 5.0 / 5.1 / 7.1
+// masks (spec 3.11) are measured as they are; any other device (quad, 2.1, ...) falls back to
+// its front left / right pair, with `exact` false.
+struct DeviceLayout
+{
+    ChannelLayout layout;
+    bool exact;
+};
+
+inline DeviceLayout deviceLayout (int channels, std::uint32_t mask) noexcept
+{
+    if (channels == 1)
+        return { ChannelLayout::mono(), true };
+    if (channels == 2)
+        return { ChannelLayout::stereo(), true };
+    if (const auto fromMask = ChannelLayout::fromWavMask (mask); fromMask && fromMask->count == channels)
+        return { *fromMask, true };
+    return { ChannelLayout::stereo(), false };
+}
+
 // Converts interleaved device samples (e.g. a WASAPI loopback packet) to planar float for the
-// first `outChannels` channels (front left / right of a surround device). Allocation-free.
+// first `outChannels` channels, in device order (the front pair when the device is not measured
+// in full). Allocation-free.
 inline void interleavedToPlanar (const std::uint8_t* src, SampleFormat format, int srcChannels, int frames,
                                  float* const* dst, int outChannels) noexcept
 {

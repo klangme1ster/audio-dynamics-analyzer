@@ -6,6 +6,7 @@
 #include "MetricsFifo.h"
 #include "MetricsHistory.h"
 #include "OutputMonitor.h"
+#include "PluginLayout.h"
 #include "TransportTracker.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -94,6 +95,18 @@ public:
     void saveEditorSize (int width, int height);
     double analysisSampleRate() const noexcept { return engine.sampleRate(); }
 
+    // Channel layout of the live input (spec 3.11). The host's bus layout decides; a choice made in
+    // the editor overrides it and is saved with the state. Without either (e.g. a bus that is not a
+    // standard speaker set) nothing is measured until the user chooses.
+    int liveChannels() const noexcept { return inputChannels.load(); }
+    std::optional<ada::ChannelLayout> liveLayout() const;   // the layout being measured
+    std::optional<ada::ChannelLayout> hostLayout() const;   // what the host's bus says
+    bool hasLayoutChoice() const;
+    // Message thread. nullopt follows the host; a choice for another channel count is ignored
+    // until the bus has that many channels.
+    void setLayoutChoice (const std::optional<ada::ChannelLayout>& layout);
+    int layoutRevision() const noexcept { return layoutChanges.load(); }
+
     juce::AudioProcessorValueTreeState parameters;
 
 private:
@@ -107,13 +120,17 @@ private:
     bool commandLineHandled = false;
     std::unique_ptr<ada::OutputMonitor> output;
     std::atomic<bool> active { false };
+    void configureEngine (double sampleRate); // not for the audio thread
     int handleTransport (bool& analyse, int numSamples) noexcept; // returns samples to skip
     void analyseBlock (const juce::AudioBuffer<float>& buffer) noexcept;
     void noteRestart (RestartReason reason, std::int64_t from, std::int64_t to) noexcept;
 
     ada::TransportTracker transport;
     double preparedRate = 0.0;
-    int preparedChannels = 0;
+    ada::ChannelLayout preparedLayout;
+    mutable juce::CriticalSection layoutLock; // message / host threads only, never the audio thread
+    std::optional<ada::ChannelLayout> layoutChoice, hostBusLayout, measuredLayout;
+    std::atomic<int> inputChannels { 2 }, layoutChanges { 0 };
     std::atomic<int> restartReason { 0 };
     std::atomic<std::int64_t> restartFrom { -1 }, restartTo { -1 };
     std::atomic<std::uint32_t> restartCount { 0 };

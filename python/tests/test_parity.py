@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from ada_core.layout import parse_layout
 from conftest import analyze_array
 import signals
 
@@ -34,11 +35,11 @@ CLI = find_cli()
 needs_cli = pytest.mark.skipif(CLI is None, reason="ada_cli not built (cmake --build build --config Release)")
 
 
-def run_cpp(x: np.ndarray, fs: int, tmp_path: Path, block: str) -> dict:
+def run_cpp(x: np.ndarray, fs: int, tmp_path: Path, block: str, layout: str | None = None) -> dict:
     raw = tmp_path / "signal.f32"
     np.ascontiguousarray(x, dtype=np.float32).tofile(raw)
-    out = subprocess.run([str(CLI), str(raw), str(fs), str(x.shape[1]), block],
-                         capture_output=True, text=True, check=True)
+    cmd = [str(CLI), str(raw), str(fs), str(x.shape[1]), block] + ([layout] if layout else [])
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return json.loads(out.stdout)
 
 
@@ -89,6 +90,46 @@ CASES = {
 }
 
 
+def surround_noise(roles: str, lfe_level_db: float | None = None) -> np.ndarray:
+    """Pink noise per channel (different seeds), a level step in the middle; optional loud LFE."""
+    names = roles.split(",")
+    parts = [signals.pink_noise(48000, int(30.0437 * 48000), -26.0 + 8.0 * (i % 3), channels=1, seed=10 + i)
+             for i in range(len(names))]
+    x = np.hstack(parts)
+    x[len(x) // 2:] *= 0.4
+    if lfe_level_db is not None and "LFE" in names:
+        x[:, names.index("LFE")] = signals.sine(48000, 30.0437, lfe_level_db, 50.0, channels=1)[:len(x), 0]
+    return x
+
+
+def surround_isp() -> np.ndarray:
+    """Inter-sample peaks on Ls (7.1), a quiet bed on the other channels."""
+    names = "L,R,C,LFE,Lb,Rb,Ls,Rs".split(",")
+    isp = signals.peak_test_sine(48000, 4, math.sqrt(2), 45.0, seconds=8, channels=1, fade_s=0.05)[:, 0]
+    x = 0.01 * signals.pink_noise(48000, len(isp), channels=len(names), seed=5)
+    x[:, names.index("Ls")] = isp
+    return x
+
+
+# Surround cases carry a layout (spec 3.11): a name or a role list in file order
+LAYOUTS = {
+    "surround-5.1-noise": "5.1",
+    "surround-5.1-lfe-active": "5.1",
+    "surround-7.1-noise": "7.1",
+    "surround-7.1-isp": "7.1",
+    "surround-5.0-noise": "5.0",
+    "surround-custom-order": "Ls,L,Rs,C,LFE,R",
+}
+CASES |= {
+    "surround-5.1-noise": (lambda: surround_noise("L,R,C,LFE,Ls,Rs"), 48000),
+    "surround-5.1-lfe-active": (lambda: surround_noise("L,R,C,LFE,Ls,Rs", lfe_level_db=0.0), 48000),
+    "surround-7.1-noise": (lambda: surround_noise("L,R,C,LFE,Lb,Rb,Ls,Rs"), 48000),
+    "surround-7.1-isp": (surround_isp, 48000),
+    "surround-5.0-noise": (lambda: surround_noise("L,R,C,Ls,Rs"), 48000),
+    "surround-custom-order": (lambda: surround_noise("Ls,L,Rs,C,LFE,R", lfe_level_db=-6.0), 48000),
+}
+
+
 def filter_tail_signal() -> np.ndarray:
     fs, H = 48000, 4800
     x = np.zeros((30 * H - 6 + 10 * fs, 1))
@@ -111,10 +152,12 @@ def non_finite_signal() -> np.ndarray:
 def test_cpp_matches_python(case, block, tmp_path):
     make, fs = CASES[case]
     x = make().astype(np.float32).astype(np.float64)  # both engines see identical float32 input
-    py = analyze_array(x, fs)
-    cpp = run_cpp(x, fs, tmp_path, block)
+    layout = LAYOUTS.get(case)
+    py = analyze_array(x, fs, layout=parse_layout(layout) if layout else None)
+    cpp = run_cpp(x, fs, tmp_path, block, layout)
 
     n = len(py.short_term)
+    assert (cpp["layout"], cpp["channel_roles"]) == (py.layout, py.channel_roles)
     assert cpp["frames"] == py.frames
     assert cpp["oversampling"] == py.oversampling
     assert_close_db(to_db(cpp["momentary"]), py.momentary, 0.01, "momentary")
@@ -200,6 +243,7 @@ def analyse_both(case: str, tmp_path: Path, codec: str, sample_format: str, fs: 
     # the container's priming is dropped and the length is the same
     assert cpp["frames"] == py.frames
     assert cpp["sample_rate"] == fs and cpp["channels"] == channels
+    assert (cpp["layout"], cpp["channel_roles"]) == (py.layout, py.channel_roles)
     return py, cpp
 
 
@@ -209,6 +253,9 @@ M4A_CASES = {  # name: (codec, sample format, fs, channels, encoder options[, fi
     "adts-44k-stereo": ("aac", "fltp", 44100, 2, {"aac_pns": "0"}, ".aac"),
     "aac-48k-mono": ("aac", "fltp", 48000, 1, {"aac_pns": "0"}),
     "alac-48k-stereo": ("alac", "s16p", 48000, 2, None),
+    # surround: the layout comes from the stream's channel configuration (Media Foundation's speaker mask);
+    # PyAV cannot encode 8 channels, so 7.1 AAC has no case here
+    "aac-48k-5.1": ("aac", "fltp", 48000, 6, {"aac_pns": "0"}),
 }
 
 
@@ -264,3 +311,67 @@ def test_m4a_pns_loudness_matches_python(tmp_path):
     ps, cs = py.summary(), cpp["summary"]
     assert abs(cs["integrated_lufs"] - ps["integrated_lufs"]) <= 0.02
     assert abs(cs["lra"] - ps["lra"]) <= 0.05
+
+
+# --- Surround files through the file reader (spec 3.11, ADA-PARITY) --------------------------------
+
+SURROUND_FILES = {  # name: (layout name, WAV channel mask, layout argument for both engines or None)
+    "wav-5.1-mask": ("5.1", 0x3F, None),
+    "wav-7.1-mask": ("7.1", 0x63F, None),
+    "wav-5.0-mask": ("5.0", 0x37, None),
+    "wav-5.1-side-mask": ("5.1", 0x60F, None),
+    "wav-6ch-no-mask-with-layout": ("5.1", 0, "5.1"),
+    "wav-6ch-custom-order": ("custom", 0, "Ls,L,Rs,C,LFE,R"),
+}
+
+
+@needs_file_cli
+@pytest.mark.parametrize("case", list(SURROUND_FILES))
+def test_surround_wav_file_analysis_matches_python(case, tmp_path):
+    from ada_core.engine import analyze_file
+    from test_surround import write_wavex
+
+    name, mask, layout = SURROUND_FILES[case]
+    roles = layout if layout and "," in layout else {"5.1": "L,R,C,LFE,Ls,Rs", "7.1": "L,R,C,LFE,Lb,Rb,Ls,Rs",
+                                                      "5.0": "L,R,C,Ls,Rs"}[name]
+    x = surround_noise(roles, lfe_level_db=-6.0)
+    x = np.round(np.clip(x, -1, 1) * 32768) / 32768
+    path = tmp_path / f"{case}.wav"
+    write_wavex(path, x, mask)
+    py = analyze_file(path, layout=parse_layout(layout) if layout else None)
+    cmd = [str(FILE_CLI), str(path)] + (["--layout", layout] if layout else [])
+    cpp = json.loads(subprocess.run(cmd, capture_output=True, text=True, check=True).stdout)
+    assert (cpp["layout"], cpp["channel_roles"], cpp["channels"]) == (py.layout, py.channel_roles, py.channels)
+    assert cpp["frames"] == py.frames
+    assert_close_db(to_db(cpp["short_term"]), py.short_term, 0.01, "short_term")
+    assert_close_db(to_db(cpp["true_peak_3s"]), py.true_peak_3s, 0.01, "true_peak_3s")
+    ps, cs = py.summary(), cpp["summary"]
+    assert abs(cs["integrated_lufs"] - ps["integrated_lufs"]) <= 0.02
+    assert abs(cs["true_peak_max_dbtp"] - ps["true_peak_max_dbtp"]) <= 0.01
+
+
+@needs_file_cli
+def test_surround_wav_file_without_layout_is_refused(tmp_path):
+    from test_surround import write_wavex
+
+    path = tmp_path / "six.wav"
+    write_wavex(path, 0.1 * surround_noise("L,R,C,LFE,Ls,Rs")[:48000], 0)
+    out = subprocess.run([str(FILE_CLI), str(path)], capture_output=True, text=True)
+    assert out.returncode != 0 and "5.1" in out.stderr
+
+
+@needs_file_cli
+def test_alac_surround_needs_a_layout_in_the_file_reader(tmp_path):
+    """Media Foundation's ALAC decoder reports no speaker mask: the file reader asks for a layout."""
+    from ada_core.engine import analyze_file
+    from test_decode import write_encoded
+
+    x = np.round(song(48000, 6, 5) * 32767) / 32767
+    path = tmp_path / "alac51.m4a"
+    write_encoded(path, x, 48000, "alac", "s16p")
+    refused = subprocess.run([str(FILE_CLI), str(path)], capture_output=True, text=True)
+    assert refused.returncode != 0 and "5.1" in refused.stderr
+    out = subprocess.run([str(FILE_CLI), str(path), "--layout", "5.1"], capture_output=True, text=True, check=True)
+    cpp, py = json.loads(out.stdout), analyze_file(path)
+    assert (cpp["layout"], cpp["frames"]) == (py.layout, py.frames)
+    assert abs(cpp["summary"]["integrated_lufs"] - py.summary()["integrated_lufs"]) <= 0.02

@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
+#include <string>
 
 namespace ada
 {
@@ -35,8 +37,8 @@ namespace
 class FileAnalysis::Worker : public juce::Thread
 {
 public:
-    Worker (std::unique_ptr<juce::AudioFormatReader> r, MetricsFifo& f, std::atomic<double>& p)
-        : juce::Thread ("ADA file analysis"), reader (std::move (r)), fifo (f), progress (p)
+    Worker (std::unique_ptr<juce::AudioFormatReader> r, ChannelLayout l, MetricsFifo& f, std::atomic<double>& p)
+        : juce::Thread ("ADA file analysis"), reader (std::move (r)), layout (l), fifo (f), progress (p)
     {
     }
 
@@ -46,7 +48,7 @@ public:
     {
         auto stop = [this] { return threadShouldExit(); };
         BlockingFifoSink sink (fifo, stop);
-        final = analyseReader (*reader, sink, stop, &progress, &failedToDecode);
+        final = analyseReader (*reader, sink, stop, &progress, &failedToDecode, layout);
         reader.reset(); // on this thread: decoders such as Media Foundation belong to the reading thread
         done.store (true, std::memory_order_release);
     }
@@ -57,6 +59,7 @@ public:
 
 private:
     std::unique_ptr<juce::AudioFormatReader> reader;
+    ChannelLayout layout;
     MetricsFifo& fifo;
     std::atomic<double>& progress;
     std::optional<DynamicsEngine::Final> final;
@@ -66,15 +69,39 @@ private:
 
 // ---------------------------------------------------------------------------------------------
 
+std::optional<ChannelLayout> FileAnalysis::detectLayout (juce::AudioFormatReader& reader)
+{
+    const auto channels = (int) reader.numChannels;
+    if (channels == 1)
+        return ChannelLayout::mono();
+    if (channels == 2)
+        return ChannelLayout::stereo();
+    const auto mask = reader.metadataValues.getValue ("ChannelMask", {});
+    if (mask.isEmpty())
+        return std::nullopt;
+    auto layout = ChannelLayout::fromWavMask ((std::uint32_t) mask.getLargeIntValue());
+    // a mask that disagrees with the channel count says nothing about this file
+    if (layout && layout->count != channels)
+        layout.reset();
+    return layout;
+}
+
 std::optional<DynamicsEngine::Final> FileAnalysis::analyseReader (juce::AudioFormatReader& reader, MetricsSink& sink,
                                                                    const std::function<bool()>& shouldStop,
-                                                                   std::atomic<double>* progress, bool* decodeFailed)
+                                                                   std::atomic<double>* progress, bool* decodeFailed,
+                                                                   const std::optional<ChannelLayout>& layoutChoice)
 {
     if (decodeFailed != nullptr)
         *decodeFailed = false;
     const int channels = (int) reader.numChannels;
+    const auto layout = layoutChoice ? layoutChoice : detectLayout (reader);
+    if (! layout)
+        throw std::invalid_argument ("the file has " + std::to_string (channels) + " channels and no channel layout");
+    if (layout->count != channels)
+        throw std::invalid_argument ("the layout has " + std::to_string (layout->count) + " channels, the file "
+                                     + std::to_string (channels));
     DynamicsEngine engine;
-    engine.prepare (reader.sampleRate, channels);
+    engine.prepare (reader.sampleRate, *layout);
 
     constexpr int blockSize = 32768;
     juce::AudioBuffer<float> buffer (std::max (2, channels), blockSize);
@@ -125,7 +152,7 @@ void FileAnalysis::cancel()
     ++changeCount;
 }
 
-bool FileAnalysis::start (const juce::File& f)
+bool FileAnalysis::start (const juce::File& f, const std::optional<ChannelLayout>& choice)
 {
     cancel();
     currentFile = f;
@@ -134,6 +161,8 @@ bool FileAnalysis::start (const juce::File& f)
     allFrames.clear();
     history = std::make_unique<HistoryStore> (1); // never leave views without a store
     error.clear();
+    layoutNeeded = false;
+    layoutSuggestion.reset();
     workerProgress = 0.0;
 
     std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (f));
@@ -145,15 +174,29 @@ bool FileAnalysis::start (const juce::File& f)
     };
     if (reader == nullptr)
         return fail ("Cannot open " + f.getFileName() + " as audio.");
-    if (reader->numChannels < 1 || reader->numChannels > (unsigned) DynamicsEngine::maxChannels)
-        return fail (f.getFileName() + " has " + juce::String (reader->numChannels)
-                     + " channels; ADA analyses mono and stereo files.");
+    const auto channelCount = (int) reader->numChannels;
+    numChannels = channelCount;
+    if (channelCount < 1 || channelCount > DynamicsEngine::maxChannels)
+        return fail (f.getFileName() + " has " + juce::String (channelCount)
+                     + " channels; ADA analyses mono, stereo, 5.0, 5.1 and 7.1 files.");
+    if (choice && choice->count != channelCount)
+        return fail (juce::String (choice->name()) + " has " + juce::String (choice->count) + " channels, but "
+                     + f.getFileName() + " has " + juce::String (channelCount) + ".");
+    const auto layout = choice ? choice : FileAnalysis::detectLayout (*reader);
+    if (! layout)
+    {
+        layoutNeeded = true;
+        layoutSuggestion = ChannelLayout::suggest (channelCount);
+        return fail (f.getFileName() + " has " + juce::String (channelCount) + " channels and no channel layout"
+                     + (layoutSuggestion ? "; choose one (suggested: " + juce::String (layoutSuggestion->name()) + ")."
+                                         : "; ADA analyses 5.0, 5.1 and 7.1 files."));
+    }
     if (! DynamicsEngine::supportsSampleRate (reader->sampleRate))
         return fail (f.getFileName() + ": sample rate " + juce::String (reader->sampleRate, 0)
                      + " Hz is not supported (needs a multiple of 100 Hz).");
 
     rate = reader->sampleRate;
-    numChannels = (int) reader->numChannels;
+    fileLayout = *layout;
     duration = (double) reader->lengthInSamples / rate;
     // lengthInSamples is an estimate for some compressed formats, hence the margin
     // (clamped in double: a broken header must not overflow the int or reserve gigabytes)
@@ -161,7 +204,7 @@ bool FileAnalysis::start (const juce::File& f)
     history = std::make_unique<HistoryStore> (std::clamp (estimatedFrames, 100, maxGraphFrames));
     allFrames.reserve ((size_t) estimatedFrames);
 
-    worker = std::make_unique<Worker> (std::move (reader), fifo, workerProgress);
+    worker = std::make_unique<Worker> (std::move (reader), *layout, fifo, workerProgress);
     currentState = State::running;
     startTime = juce::Time::getMillisecondCounterHiRes();
     worker->startThread();

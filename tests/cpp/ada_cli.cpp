@@ -1,7 +1,8 @@
 // ada_cli: run the C++ engine on raw float32 interleaved audio and print per-bin metrics and the
 // summary as JSON. Used by python/tests/test_parity.py (spec ADA-PARITY).
 //
-//   ada_cli <input.f32> <sample_rate> <channels> [block_size | random]
+//   ada_cli <input.f32> <sample_rate> <channels> [block_size | random] [layout]
+// layout: 5.0, 5.1, 7.1 or a role list in file order (L,R,C,LFE,Ls,Rs); needed above 2 channels.
 
 #include "CliJson.h"
 #include "DynamicsEngine.h"
@@ -20,12 +21,27 @@ int main (int argc, char** argv)
 {
     if (argc < 4)
     {
-        std::cerr << "usage: ada_cli <input.f32> <sample_rate> <channels> [block_size|random]\n";
+        std::cerr << "usage: ada_cli <input.f32> <sample_rate> <channels> [block_size|random] [layout]\n";
         return 2;
     }
     const double fs = std::atof (argv[2]);
     const int channels = std::atoi (argv[3]);
     const std::string blockArg = argc > 4 ? argv[4] : "4096";
+    std::optional<ada::ChannelLayout> layout;
+    if (channels == 1)
+        layout = ada::ChannelLayout::mono();
+    else if (channels == 2)
+        layout = ada::ChannelLayout::stereo();
+    if (argc > 5 && ! (layout = ada::ChannelLayout::parse (argv[5])))
+    {
+        std::cerr << "invalid layout " << argv[5] << "\n";
+        return 2;
+    }
+    if (! layout)
+    {
+        std::cerr << channels << "-channel input needs a layout (5.0, 5.1, 7.1 or a role list)\n";
+        return 2;
+    }
 
     std::ifstream in (argv[1], std::ios::binary | std::ios::ate);
     if (! in)
@@ -47,7 +63,7 @@ int main (int argc, char** argv)
     ada::DynamicsEngine engine;
     try
     {
-        engine.prepare (fs, channels);
+        engine.prepare (fs, *layout);
     }
     catch (const std::exception& e)
     {
@@ -71,6 +87,6 @@ int main (int argc, char** argv)
     }
     const auto final = engine.finish (sink);
 
-    ada::cli::printResult (sink.frames, final, engine.oversamplingFactor(), fs, channels);
+    ada::cli::printResult (sink.frames, final, engine.oversamplingFactor(), fs, engine.layout());
     return 0;
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ChannelLayout.h"
 #include "HistoryStore.h"
 #include "MetricsFifo.h"
 
@@ -43,6 +44,9 @@ public:
     const juce::String& errorText() const noexcept { return error; }
     double sampleRate() const noexcept { return rate; }
     int channels() const noexcept { return deviceChannels; }
+    // What is measured of the device: all of mono / stereo / 5.0 / 5.1 / 7.1 (layoutExact), else its front pair
+    const ChannelLayout& layout() const noexcept { return measuredLayout; }
+    bool layoutExact() const noexcept { return exactLayout; }
 
     const HistoryStore& store() const noexcept { return history; }
     // Changes on new frames and on state changes (start, stop, error)
@@ -61,6 +65,8 @@ private:
     int ticksSinceDefaultCheck = 0;
     double rate = 0.0;
     int deviceChannels = 0;
+    ChannelLayout measuredLayout = ChannelLayout::stereo();
+    bool exactLayout = true;
     std::uint64_t stateChanges = 0;
 };
 

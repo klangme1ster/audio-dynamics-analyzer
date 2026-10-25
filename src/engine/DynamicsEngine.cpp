@@ -27,20 +27,38 @@ bool DynamicsEngine::supportsSampleRate (double sampleRate) noexcept
 
 void DynamicsEngine::prepare (double sampleRate, int channelCount)
 {
+    if (channelCount == 1)
+        prepare (sampleRate, ChannelLayout::mono());
+    else if (channelCount == 2)
+        prepare (sampleRate, ChannelLayout::stereo());
+    else
+        throw std::invalid_argument ("more than two channels need a channel layout");
+}
+
+void DynamicsEngine::prepare (double sampleRate, const ChannelLayout& channelLayout)
+{
     if (! supportsSampleRate (sampleRate))
         throw std::invalid_argument ("sample rate must be a multiple of 100 Hz");
-    if (channelCount < 1 || channelCount > maxChannels)
-        throw std::invalid_argument ("only mono and stereo are supported");
+    if (! channelLayout.valid())
+        throw std::invalid_argument ("invalid channel layout");
 
     fs = std::round (sampleRate);
-    numChannels = channelCount;
+    layout_ = channelLayout;
+    measuredCount = 0;
+    for (int ch = 0; ch < layout_.count; ++ch)
+        if (layout_.weight (ch) > 0.0)
+        {
+            measuredIndex[(size_t) measuredCount] = ch;
+            measuredWeight[(size_t) measuredCount] = layout_.weight (ch);
+            ++measuredCount;
+        }
     binSize = (int) fs / 10;
     subSize = (int) fs / 100;
 
     const auto coeffs = kWeightingCoefficients (fs);
     for (auto& f : kWeighting)
         f.setCoefficients (coeffs);
-    truePeak.prepare (fs, numChannels);
+    truePeak.prepare (fs, layout_.count);
     delay = truePeak.delay();
 
     integratedHistogram.allocate();
@@ -74,7 +92,7 @@ void DynamicsEngine::process (const float* const* input, int numFrames, MetricsS
     std::array<double, maxChannels> x {};
     for (int i = 0; i < numFrames; ++i)
     {
-        for (int ch = 0; ch < numChannels; ++ch)
+        for (int ch = 0; ch < layout_.count; ++ch)
         {
             // A single NaN/inf would poison the K-filter state for good (spec 3.4: treated as 0)
             const double v = (double) input[ch][i];
@@ -96,10 +114,10 @@ void DynamicsEngine::processFrame (const double* x, MetricsSink& sink) noexcept
     }
 
     double energy = 0.0;
-    for (int ch = 0; ch < numChannels; ++ch)
+    for (int m = 0; m < measuredCount; ++m)
     {
-        const double y = kWeighting[(size_t) ch].process (x[ch]);
-        energy += y * y; // G_i = 1.0 for mono and stereo
+        const double y = kWeighting[(size_t) m].process (x[measuredIndex[(size_t) m]]);
+        energy += measuredWeight[(size_t) m] * y * y; // G_i of the channel role (spec 3.11)
     }
     subAccumulator += energy;
     if (++subPos == subSize)

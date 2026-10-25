@@ -44,11 +44,12 @@ void array (const char* name, const std::vector<ada::DynamicsMetrics>& frames, G
 }
 
 inline void printResult (const std::vector<ada::DynamicsMetrics>& f, const ada::DynamicsEngine::Final& final,
-                         int oversampling, double sampleRate, int channels)
+                         int oversampling, double sampleRate, const ada::ChannelLayout& layout)
 {
     const auto s = ada::summarize (f, final);
     std::cout << "{\n  \"frames\": " << final.frames << ",\n  \"oversampling\": " << oversampling
-              << ",\n  \"sample_rate\": " << num (sampleRate) << ",\n  \"channels\": " << channels << ",\n";
+              << ",\n  \"sample_rate\": " << num (sampleRate) << ",\n  \"channels\": " << layout.count << ",\n  \"layout\": \"" << layout.name()
+              << "\",\n  \"channel_roles\": \"" << layout.roleList() << "\",\n";
     array ("momentary", f, [] (const auto& x) { return x.momentaryLUFS; });
     array ("short_term", f, [] (const auto& x) { return x.shortTermLUFS; });
     array ("momentary_peak", f, [] (const auto& x) { return x.momentaryPeakLUFS; });
