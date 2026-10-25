@@ -307,3 +307,50 @@ def test_m4a_pns_loudness_matches_python(tmp_path):
     ps, cs = py.summary(), cpp["summary"]
     assert abs(cs["integrated_lufs"] - ps["integrated_lufs"]) <= 0.02
     assert abs(cs["lra"] - ps["lra"]) <= 0.05
+
+
+# --- Surround files through the file reader (spec 3.11, ADA-PARITY) --------------------------------
+
+SURROUND_FILES = {  # name: (layout name, WAV channel mask, layout argument for both engines or None)
+    "wav-5.1-mask": ("5.1", 0x3F, None),
+    "wav-7.1-mask": ("7.1", 0x63F, None),
+    "wav-5.0-mask": ("5.0", 0x37, None),
+    "wav-5.1-side-mask": ("5.1", 0x60F, None),
+    "wav-6ch-no-mask-with-layout": ("5.1", 0, "5.1"),
+    "wav-6ch-custom-order": ("custom", 0, "Ls,L,Rs,C,LFE,R"),
+}
+
+
+@needs_file_cli
+@pytest.mark.parametrize("case", list(SURROUND_FILES))
+def test_surround_wav_file_analysis_matches_python(case, tmp_path):
+    from ada_core.engine import analyze_file
+    from test_surround import write_wavex
+
+    name, mask, layout = SURROUND_FILES[case]
+    roles = layout if layout and "," in layout else {"5.1": "L,R,C,LFE,Ls,Rs", "7.1": "L,R,C,LFE,Lb,Rb,Ls,Rs",
+                                                      "5.0": "L,R,C,Ls,Rs"}[name]
+    x = surround_noise(roles, lfe_level_db=-6.0)
+    x = np.round(np.clip(x, -1, 1) * 32768) / 32768
+    path = tmp_path / f"{case}.wav"
+    write_wavex(path, x, mask)
+    py = analyze_file(path, layout=parse_layout(layout) if layout else None)
+    cmd = [str(FILE_CLI), str(path)] + (["--layout", layout] if layout else [])
+    cpp = json.loads(subprocess.run(cmd, capture_output=True, text=True, check=True).stdout)
+    assert (cpp["layout"], cpp["channel_roles"], cpp["channels"]) == (py.layout, py.channel_roles, py.channels)
+    assert cpp["frames"] == py.frames
+    assert_close_db(to_db(cpp["short_term"]), py.short_term, 0.01, "short_term")
+    assert_close_db(to_db(cpp["true_peak_3s"]), py.true_peak_3s, 0.01, "true_peak_3s")
+    ps, cs = py.summary(), cpp["summary"]
+    assert abs(cs["integrated_lufs"] - ps["integrated_lufs"]) <= 0.02
+    assert abs(cs["true_peak_max_dbtp"] - ps["true_peak_max_dbtp"]) <= 0.01
+
+
+@needs_file_cli
+def test_surround_wav_file_without_layout_is_refused(tmp_path):
+    from test_surround import write_wavex
+
+    path = tmp_path / "six.wav"
+    write_wavex(path, 0.1 * surround_noise("L,R,C,LFE,Ls,Rs")[:48000], 0)
+    out = subprocess.run([str(FILE_CLI), str(path)], capture_output=True, text=True)
+    assert out.returncode != 0 and "5.1" in out.stderr
