@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ada-core"
-version = "0.1.0"
+version = "0.2.0"
 license = "MIT"
 description = "Audio Dynamics Analyzer: BS.1770 / EBU R128 loudness, true peak, PSR and PLR"
 requires-python = ">=3.11"

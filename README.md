@@ -27,7 +27,7 @@ Ready-to-use Windows builds (VST3 plugin and standalone app, 64-bit) are on the 
 
 The Python engine is the numerical reference. The C++ engine is a port of it and must match it within fixed tolerances (spec test ADA-PARITY).
 
-All phases of the [implementation plan](IMPLEMENTATION_PLAN.md) are done; v0.1.0 is released. Surround (5.0, 5.1, 7.1) is in development on a branch. Still open: MP3 parity between the plugin's and the scanner's decoders, and macOS builds (see [Status and open items](IMPLEMENTATION_PLAN.md#status-and-open-items)).
+All phases of the [implementation plan](IMPLEMENTATION_PLAN.md) are done; v0.2.0 is released and adds surround (5.0, 5.1, 7.1). Still open: MP3 parity between the plugin's and the scanner's decoders, and macOS builds (see [Status and open items](IMPLEMENTATION_PLAN.md#status-and-open-items)).
 
 ## Quick start
 
@@ -84,8 +84,8 @@ The first configure downloads JUCE 8. The VST3 and the standalone app end up in 
 Pushing a version tag builds and publishes a release (`.github/workflows/release.yml`): GitHub builds on Windows, runs the tests (the M4A comparisons only where the build machine's Windows can decode AAC; otherwise the run shows a warning), packs the VST3, the standalone app and `packaging/INSTALL.txt` into a zip and attaches it with `packaging/release-notes.md`. The tag must match the version in `CMakeLists.txt`:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 A build without a release can be started by hand under *Actions → Release → Run workflow*; the zip is then attached to the run. Binaries link the C/C++ runtime statically, so users need no Visual C++ redistributable.

@@ -1,3 +1,12 @@
+## What's new in 0.2.0
+
+**Surround analysis: 5.0, 5.1 and 7.1.** Channels are weighted as BS.1770 prescribes (surround channels +1.5 dB, never folded down). The LFE is left out of the loudness but counts for the true peak.
+
+- **Plugin:** accepts 5.0, 5.1 and 7.1 buses; the source line shows the layout, and a layout selector appears for 3+ channels.
+- **Files:** the layout comes from the WAV channel mask or the M4A channel configuration. A multichannel file without one is not guessed: the app suggests a layout and you confirm or edit it. `ada-scan --layout 5.1` does the same.
+- **Output view:** Windows devices with a 5.0, 5.1 or 7.1 speaker setup are measured in full.
+- Mono and stereo results are unchanged.
+
 ## Download
 
 **`AudioDynamicsAnalyzer-…-windows-x64.zip`** (below, under *Assets*) contains:

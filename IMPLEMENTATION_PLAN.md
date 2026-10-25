@@ -132,7 +132,7 @@ Spec: §1 scope, §2.1 T3341-6, §2.2 ADA-SURR-W / ADA-LFE / ADA-SURR-TP / ADA-N
 ---
 
 ## Status and open items
-As of 2026-10-25 all phases above are done. v0.1.0 was released from `ad56ed8` (Windows x64 zip: VST3 + standalone app, built and tested by `.github/workflows/release.yml`).
+As of 2026-10-25 all phases above are done. v0.1.0 was released from `ad56ed8` and v0.2.0 (surround) from the merge of Phase 5 (Windows x64 zip: VST3 + standalone app, built and tested by `.github/workflows/release.yml`).
 
 Channel handling (spec §1 scope, §3.11, BS.1770): mono, stereo, 5.0, 5.1 and 7.1 in the Python engine, the plugin bus layouts, file analysis and the Windows output source. Channels are K-weighted per channel and the powers summed with $G_i$ per speaker role (`DynamicsEngine::processFrame`), never folded down; true peak is the maximum over all channels, the LFE included. Mono is $N = 1$, not dual-mono (ADA-MONO). Layouts that cannot be determined are rejected until supplied or confirmed.
 

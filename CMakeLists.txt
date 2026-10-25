@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(AudioDynamicsAnalyzer VERSION 0.1.0 LANGUAGES C CXX)
+project(AudioDynamicsAnalyzer VERSION 0.2.0 LANGUAGES C CXX)
 
 # Release binaries must run without the Visual C++ redistributable: link the C/C++ runtime
 # statically (all targets, including JUCE and the tests)
