@@ -15,6 +15,7 @@ from rich.table import Table
 
 from .decode import AUDIO_EXTENSIONS
 from .engine import PSR_ZONES, analyze_file
+from .layout import parse_layout
 from .visualizer import add_size_arguments
 
 ZONE_STYLES = {"green": "green", "yellow": "yellow", "orange": "dark_orange", "red": "red"}
@@ -32,10 +33,11 @@ def find_audio(paths: list[Path]) -> list[Path]:
 
 
 def scan_one(path: str, plot_dir: str | None, plot_format: str,
-             plot_width: int = 2160, plot_aspect: float = 1.6) -> dict:
+             plot_width: int = 2160, plot_aspect: float = 1.6,
+             layout: str | None = None) -> dict:
     """Worker: analyze one file, optionally plot it; returns only the summary (never audio)."""
     try:
-        result = analyze_file(path)
+        result = analyze_file(path, layout=layout)
         row = {"file": path, **result.summary()}
         if plot_dir:
             from .visualizer import plot_result
@@ -62,6 +64,7 @@ def _num(v: float | None, style: str = "") -> str:
 def render_table(rows: list[dict], root: Path | None) -> Table:
     table = Table(title="ADA dynamics scan", header_style="bold", show_lines=False)
     table.add_column("File", overflow="fold", min_width=16)
+    table.add_column("Ch")
     for name in ("I (LUFS)", "LRA", "TP max", "PLR", "PSR min", "PSR mean", "PSR P10", "Ceil %"):
         table.add_column(name, justify="right")
     table.add_column("Zone (P10)")
@@ -73,14 +76,14 @@ def render_table(rows: list[dict], root: Path | None) -> Table:
             except ValueError:
                 pass
         if "error" in r:
-            table.add_row(name, "[red]error[/]", *[""] * 8)
+            table.add_row(name, "", "[red]error[/]", *[""] * 8)
             continue
         tp = r["true_peak_max_dbtp"]
         tp_style = "red" if tp is not None and tp > 0.0 else ("yellow" if tp is not None and tp > -1.0 else "")
         p10 = r["psr_p10"]
         zone = next((z for z, lo, hi in PSR_ZONES if p10 is not None and lo <= p10 < hi), None)
         table.add_row(
-            name, _num(r["integrated_lufs"]), _num(r["lra"]), _num(tp, tp_style), _num(r["plr"]),
+            name, r["layout"], _num(r["integrated_lufs"]), _num(r["lra"]), _num(tp, tp_style), _num(r["plr"]),
             _num(r["psr_min"], _zone_style(r["psr_min"])),
             _num(r["psr_mean"], _zone_style(r["psr_mean"])),
             _num(p10, _zone_style(p10)),
@@ -114,10 +117,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--export-json", type=Path, metavar="FILE")
     p.add_argument("--plot", type=Path, metavar="DIR", help="write a dynamics plot per file")
     p.add_argument("--plot-format", choices=("png", "pdf", "svg"), default="png")
+    p.add_argument("--layout", metavar="NAME|ROLES",
+                   help="channel layout for multichannel files without a channel mask: 5.0, 5.1, 7.1 "
+                        "or a role list in file order such as L,R,C,LFE,Ls,Rs (spec 3.11)")
     add_size_arguments(p, prefix="plot-")
     args = p.parse_args(argv)
 
     console = Console()
+    if args.layout:
+        try:
+            parse_layout(args.layout)
+        except ValueError as e:
+            p.error(f"--layout: {e}")
     files = find_audio(args.paths)
     if not files:
         console.print("[red]No audio files found.[/]")
@@ -131,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
     with progress, ProcessPoolExecutor(max_workers=args.jobs) as pool:
         task = progress.add_task("Analyzing", total=len(files))
         futures = [pool.submit(scan_one, str(f), str(args.plot) if args.plot else None,
-                               args.plot_format, args.plot_width, args.plot_aspect)
+                               args.plot_format, args.plot_width, args.plot_aspect, args.layout)
                    for f in files]
         for fut in as_completed(futures):
             rows.append(fut.result())

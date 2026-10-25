@@ -10,6 +10,7 @@ from scipy.ndimage import maximum_filter1d
 
 from .decode import open_audio
 from .kweight import KWeighting
+from .layout import ChannelLayout, resolve_layout
 from .true_peak import TruePeakDetector
 
 ABSOLUTE_GATE = -70.0
@@ -69,6 +70,8 @@ class Result:
     psr_p10: float | None
     peak_near_ceiling_pct: float | None
     psr_zone_percent: dict[str, float | None] = field(default_factory=dict)
+    layout: str = "stereo"        # layout name (spec 3.11)
+    channel_roles: str = "L,R"    # role per input channel, in file order
 
     @property
     def duration(self) -> float:
@@ -84,6 +87,8 @@ class Result:
             "duration_s": round(self.duration, 3),
             "sample_rate": self.sample_rate,
             "channels": self.channels,
+            "layout": self.layout,
+            "channel_roles": self.channel_roles,
             "oversampling": self.oversampling,
             "integrated_lufs": _opt(self.integrated),
             "lra": _opt(self.lra),
@@ -102,20 +107,26 @@ class Result:
 class Analyzer:
     """Streaming analyzer: feed (frames, channels) blocks of any length, then finish()."""
 
-    def __init__(self, sample_rate: int, channels: int):
+    def __init__(self, sample_rate: int, channels: int,
+                 layout: ChannelLayout | str | None = None):
+        """layout: needed for more than 2 channels (spec 3.11); mono / stereo default by count."""
         if sample_rate % 100 != 0:
             raise ValueError(f"sample rate {sample_rate} Hz is not a multiple of 100 Hz")
-        if channels not in (1, 2):
-            raise ValueError(f"{channels} channels not supported (mono or stereo only)")
+        self.layout = resolve_layout(channels, override=layout)
         self.fs = sample_rate
         self.channels = channels
+        # the LFE (weight 0) is neither filtered nor measured; the rest is weighted by G_i
+        self._measured = self.layout.measured
+        self._weights = self.layout.weights[self._measured]
+        self._all_measured = len(self._measured) == channels
+        measured = len(self._measured)
         self.bin_size = sample_rate // 10
         self.sub_size = sample_rate // 100
-        self.kweight = KWeighting(sample_rate, channels)
-        self.true_peak = TruePeakDetector(sample_rate, channels)
+        self.kweight = KWeighting(sample_rate, measured)
+        self.true_peak = TruePeakDetector(sample_rate, measured)
         self.frames = 0
         self._sub_energy: list[np.ndarray] = []   # (sub-bins, channels) per chunk
-        self._partial = np.zeros(channels)        # energy of the open sub-bin
+        self._partial = np.zeros(measured)        # energy of the open sub-bin
         self._partial_len = 0
         self._peaks: list[np.ndarray] = []
 
@@ -131,6 +142,8 @@ class Analyzer:
         if n == 0:
             return
         self.frames += n
+        if not self._all_measured:
+            x = x[:, self._measured]
         self._peaks.append(self.true_peak.process(x))
 
         sq = self.kweight.process(x) ** 2
@@ -142,7 +155,7 @@ class Analyzer:
         first = self._partial + sq[:need].sum(axis=0)
         full = (n - need) // self.sub_size
         end = need + full * self.sub_size
-        body = sq[need:end].reshape(full, self.sub_size, self.channels).sum(axis=1)
+        body = sq[need:end].reshape(full, self.sub_size, len(self._measured)).sum(axis=1)
         self._sub_energy.append(np.vstack([first, body]))
         self._partial = sq[end:].sum(axis=0)
         self._partial_len = n - end
@@ -153,13 +166,12 @@ class Analyzer:
         bin_peak = np.concatenate(self._peaks + [closed])
 
         sub = (np.vstack(self._sub_energy) if self._sub_energy
-               else np.zeros((0, self.channels)))
+               else np.zeros((0, len(self._measured))))
         n_bins = self.frames // H
         assert len(bin_peak) == n_bins, (len(bin_peak), n_bins)
 
-        # channel weights G_i = 1.0 for mono and stereo
         # a trailing partial bin contributes to the max true peak only (spec 3.1)
-        sub_power = sub.sum(axis=1)[:n_bins * 10]
+        sub_power = (sub @ self._weights)[:n_bins * 10]  # sum_i G_i e_i[u]
         bin_power = sub_power.reshape(n_bins, 10).sum(axis=1)
 
         block_power = window_sum(bin_power, 4) / (4 * H)        # 400 ms
@@ -206,6 +218,7 @@ class Analyzer:
         return Result(
             sample_rate=self.fs, channels=self.channels, frames=self.frames,
             oversampling=self.true_peak.factor,
+            layout=self.layout.name, channel_roles=self.layout.role_list,
             momentary=momentary, short_term=short_term, bin_peak=bin_peak,
             true_peak_3s=true_peak_3s, psr=psr,
             momentary_10ms=momentary_10ms, short_term_10ms=short_term_10ms,
@@ -248,10 +261,15 @@ class Analyzer:
         return float(hi - lo), rel_gate
 
 
-def analyze_file(path: str | Path, block_seconds: float = 5.0) -> Result:
-    """Stream an audio file through the analyzer with bounded memory."""
+def analyze_file(path: str | Path, block_seconds: float = 5.0,
+                 layout: ChannelLayout | str | None = None) -> Result:
+    """Stream an audio file through the analyzer with bounded memory.
+
+    layout overrides the layout found in the file; multichannel files without one are rejected.
+    """
     info, blocks = open_audio(path, block_seconds)
-    analyzer = Analyzer(info.sample_rate, info.channels)
+    analyzer = Analyzer(info.sample_rate, info.channels,
+                        resolve_layout(info.channels, info.layout, layout))
     for block in blocks:
         analyzer.process(block)
     return analyzer.finish()

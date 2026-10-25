@@ -114,10 +114,10 @@ Test IDs (T3341-*, T3342-*, ADA-*) refer to §2 of `PROJECT_SPECIFICATION.md`. E
 ## Phase 5: Surround (5.0, 5.1, 7.1) — branch `feature/surround`
 Spec: §1 scope, §2.1 T3341-6, §2.2 ADA-SURR-W / ADA-LFE / ADA-SURR-TP / ADA-NOFOLD / ADA-LAYOUT / ADA-SURR-CHUNK, §3.1, §3.11. Tests first, Python before C++.
 - [x] **5.1 Spec and tests (Python)** — spec changes above; `python/tests/test_surround.py` (new), T3341-6 rows in `test_compliance.py`, `multichannel` / `tone_on` in `signals.py`, `layout` argument in `conftest.analyze_array`. The EBU case-6 files (`seq-3341-6-5channels`, `seq-3341-6-6channels-WAVEEX`) come with the EBU test set already used by `fetch_ebu_testset.py`. State at the end of this step: the new tests fail (`ada_core.layout` does not exist yet), everything else passes.
-- [ ] **5.2 Layouts (`ada_core/layout.py`)** → ADA-LAYOUT
+- [x] **5.2 Layouts (`ada_core/layout.py`)** → ADA-LAYOUT
   - `ChannelLayout(roles)` with `name`, `channels`, `weights` (LFE = 0, not measured); `get_layout`, `parse_layout` (name or role list; the standard order keeps its name), `layout_from_mask` (WAV `dwChannelMask`), `suggest_layout(channels)` (5 → 5.0, 6 → 5.1, 8 → 7.1, else `None`), `resolve_layout(channels, mask=None, override=None)`; unresolved multichannel raises `ValueError` naming the suggestion.
   - `decode.py`: `AudioInfo.channel_mask` from the WAVE_FORMAT_EXTENSIBLE `fmt ` chunk (own small RIFF parse; libsndfile does not expose it), FLAC / Ogg masks where libsndfile gives them, PyAV layout for M4A.
-- [ ] **5.3 Engine** → ADA-SURR-W, ADA-LFE, ADA-SURR-TP, ADA-NOFOLD, ADA-SURR-CHUNK, T3341-6
+- [x] **5.3 Engine** → ADA-SURR-W, ADA-LFE, ADA-SURR-TP, ADA-NOFOLD, ADA-SURR-CHUNK, T3341-6
   - `Analyzer(fs, channels, layout=None)`; only measured channels are K-weighted and oversampled, weights applied when summing the sub-bin energies; `Result.layout`, `summary()` fields `layout` and `channel_roles`.
   - `analyze_file(path, layout=None)`; `ada-scan --layout NAME|ROLES` (one layout for all multichannel files of a run; the table and exports show the layout).
 - [ ] **5.4 C++ engine** → ADA-PARITY (5.1, 7.1)

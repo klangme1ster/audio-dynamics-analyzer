@@ -36,6 +36,8 @@ def assert_same(a, b, atol=1e-9):
                                    equal_nan=True, err_msg=name)
     sb = b.summary()
     for k, v in a.summary().items():
+        if k in ("layout", "channel_roles"):  # a permuted custom layout names itself differently
+            continue
         if isinstance(v, float):
             assert v == pytest.approx(sb[k], abs=atol), k
         else:
@@ -138,7 +140,7 @@ def test_chunk_invariance_5_1():
 def write_wavex(path, x, mask):
     """Write 16-bit WAVE_FORMAT_EXTENSIBLE with an explicit dwChannelMask."""
     ch = x.shape[1]
-    pcm = np.clip(np.round(x * 32767), -32768, 32767).astype("<i2").tobytes()
+    pcm = np.clip(np.round(x * 32768), -32768, 32767).astype("<i2").tobytes()
     guid = struct.pack("<IHH8s", 1, 0, 0x10, bytes.fromhex("800000aa00389b71"))
     fmt = struct.pack("<HHIIHHHHI", 0xFFFE, ch, FS, FS * ch * 2, ch * 2, 16, 22, 16, mask) + guid
     body = b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(pcm)) + pcm
@@ -150,7 +152,7 @@ def test_layout_from_wav_mask(tmp_path, mask, name):
     layout = get_layout(name)
     assert layout_from_mask(mask).name == name
     x = signals.pink_noise(FS, 2 * FS, -20.0, channels=layout.channels)
-    x = np.round(x * 32767) / 32767  # exactly representable in the 16-bit file
+    x = np.round(x * 32768) / 32768  # exactly representable in the 16-bit file
     f = tmp_path / "m.wav"
     write_wavex(f, x, mask)
     r = analyze_file(f)  # no layout argument: the mask decides
