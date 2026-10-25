@@ -35,7 +35,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout AdaAudioProcessor::createPar
 void AdaAudioProcessor::prepareToPlay (double sampleRate, int)
 {
     setLatencySamples (0); // pass-through: metering latency does not delay the audio
-    const int channels = juce::jlimit (1, ada::DynamicsEngine::maxChannels, getTotalNumInputChannels());
+    const int channels = juce::jlimit (1, ada::DynamicsEngine::maxPlainChannels, getTotalNumInputChannels());
     const bool supported = ada::DynamicsEngine::supportsSampleRate (sampleRate);
 
     // Hosts may deactivate and reactivate plugins around transport changes (e.g. Cubase suspending
@@ -94,7 +94,7 @@ void AdaAudioProcessor::analyseBlock (const juce::AudioBuffer<float>& buffer) no
         return; // display keeps the last values
 
     // After a resume slightly before the pause point, audio that was already measured is skipped
-    std::array<const float*, ada::DynamicsEngine::maxChannels> channels {};
+    std::array<const float*, ada::DynamicsEngine::maxPlainChannels> channels {};
     for (int ch = 0; ch < engine.channels(); ++ch)
         channels[(size_t) ch] = buffer.getReadPointer (ch, skip);
     engine.setClipThreshold (clipThreshold->load (std::memory_order_relaxed));

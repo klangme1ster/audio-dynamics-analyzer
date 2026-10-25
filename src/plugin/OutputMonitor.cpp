@@ -197,14 +197,14 @@ private:
         if (FAILED (init) || FAILED (client->GetService (IID_PPV_ARGS (&captureClient))))
             return reportFailure ("Cannot capture the output device (loopback not available).");
 
-        const int engineChannels = (std::min) (srcChannels, DynamicsEngine::maxChannels);
+        const int engineChannels = (std::min) (srcChannels, DynamicsEngine::maxPlainChannels);
         engine.prepare (rate, engineChannels);
         CaptureSink sink (fifo, *this);
 
         constexpr int maxBlock = 48000;
-        std::vector<float> planar ((size_t) (maxBlock * DynamicsEngine::maxChannels), 0.0f);
-        std::array<float*, DynamicsEngine::maxChannels> ptrs { planar.data(), planar.data() + maxBlock };
-        std::array<const float*, DynamicsEngine::maxChannels> cptrs { ptrs[0], ptrs[1] };
+        std::vector<float> planar ((size_t) (maxBlock * DynamicsEngine::maxPlainChannels), 0.0f);
+        std::array<float*, DynamicsEngine::maxPlainChannels> ptrs { planar.data(), planar.data() + maxBlock };
+        std::array<const float*, DynamicsEngine::maxPlainChannels> cptrs { ptrs[0], ptrs[1] };
 
         if (FAILED (client->Start()))
             return reportFailure ("Cannot start capturing the output device.");

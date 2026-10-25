@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ChannelLayout.h"
 #include "KWeighting.h"
 #include "LoudnessHistogram.h"
 #include "TruePeakDetector.h"
@@ -46,11 +47,15 @@ public:
 class DynamicsEngine
 {
 public:
-    static constexpr int maxChannels = TruePeakDetector::maxChannels;
+    static constexpr int maxChannels = ChannelLayout::maxChannels;
+    // Mono / stereo need no layout; hosts and files with more channels must supply one (spec 3.11)
+    static constexpr int maxPlainChannels = 2;
 
     static bool supportsSampleRate (double sampleRate) noexcept;
 
-    // Throws std::invalid_argument for unsupported rates or channel counts.
+    // Throws std::invalid_argument for unsupported rates or invalid layouts.
+    void prepare (double sampleRate, const ChannelLayout& channelLayout);
+    // Mono or stereo by channel count; more channels throw (they need a layout).
     void prepare (double sampleRate, int numChannels);
 
     void process (const float* const* input, int numFrames, MetricsSink& sink) noexcept;
@@ -71,7 +76,8 @@ public:
     int oversamplingFactor() const noexcept { return truePeak.oversampling(); }
     int latencySamples() const noexcept { return truePeak.delay(); }
     double sampleRate() const noexcept { return fs; }
-    int channels() const noexcept { return numChannels; }
+    int channels() const noexcept { return layout_.count; }
+    const ChannelLayout& layout() const noexcept { return layout_; }
 
 private:
     void resetState() noexcept;
@@ -84,7 +90,13 @@ private:
     static constexpr int subBinsPerWindowS = 300, subBinsPerWindowM = 40, peakBins = 30;
 
     double fs = 48000.0;
-    int numChannels = 2, binSize = 4800, subSize = 480, delay = 0;
+    // The LFE (weight 0) is neither filtered nor measured: the engine works on the measured
+    // channels only, weighted by G_i (spec 3.11). All fixed-size; set in prepare().
+    ChannelLayout layout_ = ChannelLayout::stereo();
+    int measuredCount = 2;
+    std::array<int, maxChannels> measuredIndex {};
+    std::array<double, maxChannels> measuredWeight {};
+    int binSize = 4800, subSize = 480, delay = 0;
     std::array<KWeightingFilter, maxChannels> kWeighting;
     TruePeakDetector truePeak;
     LoudnessHistogram integratedHistogram, rangeHistogram;

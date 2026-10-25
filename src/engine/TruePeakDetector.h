@@ -11,11 +11,11 @@ namespace ada
 
 // BS.1770 Annex 2 polyphase interpolator (spec 3.3). Per input frame it returns the largest
 // interpolated magnitude over channels and active phases. The caller attributes that value to
-// input time k - delay(). No allocation; fixed-size state for up to two channels.
+// input time k - delay(). No allocation; fixed-size state for up to eight channels.
 class TruePeakDetector
 {
 public:
-    static constexpr int maxChannels = 2;
+    static constexpr int maxChannels = 8;
 
     static int oversamplingFactor (double sampleRate) noexcept
     {

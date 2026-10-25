@@ -26,7 +26,8 @@ add_executable(ada_engine_tests
     test_engine.cpp
     test_history.cpp
     test_transport.cpp
-    test_realtime.cpp)
+    test_realtime.cpp
+    test_surround.cpp)
 target_include_directories(ada_engine_tests SYSTEM PRIVATE ${doctest_SOURCE_DIR}) # third-party: no warnings
 target_link_libraries(ada_engine_tests PRIVATE ada_engine ebur128_oracle)
 ada_set_warnings(ada_engine_tests)

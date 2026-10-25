@@ -145,7 +145,7 @@ bool FileAnalysis::start (const juce::File& f)
     };
     if (reader == nullptr)
         return fail ("Cannot open " + f.getFileName() + " as audio.");
-    if (reader->numChannels < 1 || reader->numChannels > (unsigned) DynamicsEngine::maxChannels)
+    if (reader->numChannels < 1 || reader->numChannels > (unsigned) DynamicsEngine::maxPlainChannels)
         return fail (f.getFileName() + " has " + juce::String (reader->numChannels)
                      + " channels; ADA analyses mono and stereo files.");
     if (! DynamicsEngine::supportsSampleRate (reader->sampleRate))

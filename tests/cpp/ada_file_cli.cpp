@@ -75,6 +75,6 @@ int main (int argc, char** argv)
                     out.writeFloat (buffer.getSample (c, i));
         }
     }
-    ada::cli::printResult (sink.frames, *final, probe.oversamplingFactor(), reader->sampleRate, (int) reader->numChannels);
+    ada::cli::printResult (sink.frames, *final, probe.oversamplingFactor(), reader->sampleRate, probe.layout());
     return 0;
 }

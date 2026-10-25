@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from ada_core.layout import parse_layout
 from conftest import analyze_array
 import signals
 
@@ -34,11 +35,11 @@ CLI = find_cli()
 needs_cli = pytest.mark.skipif(CLI is None, reason="ada_cli not built (cmake --build build --config Release)")
 
 
-def run_cpp(x: np.ndarray, fs: int, tmp_path: Path, block: str) -> dict:
+def run_cpp(x: np.ndarray, fs: int, tmp_path: Path, block: str, layout: str | None = None) -> dict:
     raw = tmp_path / "signal.f32"
     np.ascontiguousarray(x, dtype=np.float32).tofile(raw)
-    out = subprocess.run([str(CLI), str(raw), str(fs), str(x.shape[1]), block],
-                         capture_output=True, text=True, check=True)
+    cmd = [str(CLI), str(raw), str(fs), str(x.shape[1]), block] + ([layout] if layout else [])
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return json.loads(out.stdout)
 
 
@@ -89,6 +90,46 @@ CASES = {
 }
 
 
+def surround_noise(roles: str, lfe_level_db: float | None = None) -> np.ndarray:
+    """Pink noise per channel (different seeds), a level step in the middle; optional loud LFE."""
+    names = roles.split(",")
+    parts = [signals.pink_noise(48000, int(30.0437 * 48000), -26.0 + 8.0 * (i % 3), channels=1, seed=10 + i)
+             for i in range(len(names))]
+    x = np.hstack(parts)
+    x[len(x) // 2:] *= 0.4
+    if lfe_level_db is not None and "LFE" in names:
+        x[:, names.index("LFE")] = signals.sine(48000, 30.0437, lfe_level_db, 50.0, channels=1)[:len(x), 0]
+    return x
+
+
+def surround_isp() -> np.ndarray:
+    """Inter-sample peaks on Ls (7.1), a quiet bed on the other channels."""
+    names = "L,R,C,LFE,Lb,Rb,Ls,Rs".split(",")
+    isp = signals.peak_test_sine(48000, 4, math.sqrt(2), 45.0, seconds=8, channels=1, fade_s=0.05)[:, 0]
+    x = 0.01 * signals.pink_noise(48000, len(isp), channels=len(names), seed=5)
+    x[:, names.index("Ls")] = isp
+    return x
+
+
+# Surround cases carry a layout (spec 3.11): a name or a role list in file order
+LAYOUTS = {
+    "surround-5.1-noise": "5.1",
+    "surround-5.1-lfe-active": "5.1",
+    "surround-7.1-noise": "7.1",
+    "surround-7.1-isp": "7.1",
+    "surround-5.0-noise": "5.0",
+    "surround-custom-order": "Ls,L,Rs,C,LFE,R",
+}
+CASES |= {
+    "surround-5.1-noise": (lambda: surround_noise("L,R,C,LFE,Ls,Rs"), 48000),
+    "surround-5.1-lfe-active": (lambda: surround_noise("L,R,C,LFE,Ls,Rs", lfe_level_db=0.0), 48000),
+    "surround-7.1-noise": (lambda: surround_noise("L,R,C,LFE,Lb,Rb,Ls,Rs"), 48000),
+    "surround-7.1-isp": (surround_isp, 48000),
+    "surround-5.0-noise": (lambda: surround_noise("L,R,C,Ls,Rs"), 48000),
+    "surround-custom-order": (lambda: surround_noise("Ls,L,Rs,C,LFE,R", lfe_level_db=-6.0), 48000),
+}
+
+
 def filter_tail_signal() -> np.ndarray:
     fs, H = 48000, 4800
     x = np.zeros((30 * H - 6 + 10 * fs, 1))
@@ -111,10 +152,12 @@ def non_finite_signal() -> np.ndarray:
 def test_cpp_matches_python(case, block, tmp_path):
     make, fs = CASES[case]
     x = make().astype(np.float32).astype(np.float64)  # both engines see identical float32 input
-    py = analyze_array(x, fs)
-    cpp = run_cpp(x, fs, tmp_path, block)
+    layout = LAYOUTS.get(case)
+    py = analyze_array(x, fs, layout=parse_layout(layout) if layout else None)
+    cpp = run_cpp(x, fs, tmp_path, block, layout)
 
     n = len(py.short_term)
+    assert (cpp["layout"], cpp["channel_roles"]) == (py.layout, py.channel_roles)
     assert cpp["frames"] == py.frames
     assert cpp["oversampling"] == py.oversampling
     assert_close_db(to_db(cpp["momentary"]), py.momentary, 0.01, "momentary")

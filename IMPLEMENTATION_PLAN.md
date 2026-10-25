@@ -120,8 +120,8 @@ Spec: §1 scope, §2.1 T3341-6, §2.2 ADA-SURR-W / ADA-LFE / ADA-SURR-TP / ADA-N
 - [x] **5.3 Engine** → ADA-SURR-W, ADA-LFE, ADA-SURR-TP, ADA-NOFOLD, ADA-SURR-CHUNK, T3341-6
   - `Analyzer(fs, channels, layout=None)`; only measured channels are K-weighted and oversampled, weights applied when summing the sub-bin energies; `Result.layout`, `summary()` fields `layout` and `channel_roles`.
   - `analyze_file(path, layout=None)`; `ada-scan --layout NAME|ROLES` (one layout for all multichannel files of a run; the table and exports show the layout).
-- [ ] **5.4 C++ engine** → ADA-PARITY (5.1, 7.1)
-  - `DynamicsEngine::prepare(fs, layout)`, `maxChannels` = 8, weights and the measured-channel mask fixed at `prepare()`; `gen_cpp_tables.py` unchanged (weights are not generated constants). Parity signals in `python/tests/test_parity.py` and `ada_cli` (layout argument).
+- [x] **5.4 C++ engine** → ADA-PARITY (5.1, 7.1)
+  - `DynamicsEngine::prepare(fs, layout)`, `maxChannels` = 8, weights and the measured-channel mask fixed at `prepare()`; `gen_cpp_tables.py` unchanged (weights are not generated constants). Parity signals in `python/tests/test_parity.py` and `ada_cli` (layout argument). `src/engine/ChannelLayout.h` mirrors `ada_core/layout.py` (roles, weights, name / role-list parsing, WAV masks, suggestions); `tests/cpp/test_surround.cpp` covers ADA-SURR-W, ADA-LFE, ADA-SURR-TP, ADA-NOFOLD and ADA-LAYOUT. Until 5.5 the plugin, file analysis and output capture stay on mono / stereo (`DynamicsEngine::maxPlainChannels`).
 - [ ] **5.5 Sources and GUI**
   - File analysis (`FileAnalysis.cpp`): JUCE channel layouts → §3.11 roles; a file without a layout asks for one.
   - Plugin bus layouts (`isBusesLayoutSupported`): mono, stereo, 5.0, 5.1, 7.1; layout selector in the editor with the suggestion marked unconfirmed until accepted; the layout is saved with the state.

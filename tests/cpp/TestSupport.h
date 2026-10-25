@@ -97,10 +97,10 @@ struct Run
     ada::Summary summary;
 };
 
-inline Run analyze (const Signal& s, int blockSize = 4096)
+inline Run analyze (const Signal& s, const ada::ChannelLayout& layout, int blockSize = 4096)
 {
     ada::DynamicsEngine engine;
-    engine.prepare (s.fs, (int) s.channels.size());
+    engine.prepare (s.fs, layout);
     CollectingSink sink;
     for (std::size_t pos = 0; pos < s.frames(); pos += (std::size_t) blockSize)
     {
@@ -112,6 +112,12 @@ inline Run analyze (const Signal& s, int blockSize = 4096)
     r.frames = std::move (sink.frames);
     r.summary = ada::summarize (r.frames, r.final);
     return r;
+}
+
+inline Run analyze (const Signal& s, int blockSize = 4096)
+{
+    return analyze (s, s.channels.size() == 1 ? ada::ChannelLayout::mono() : ada::ChannelLayout::stereo(),
+                    blockSize);
 }
 
 } // namespace adatest
