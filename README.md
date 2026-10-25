@@ -27,6 +27,8 @@ Ready-to-use Windows builds (VST3 plugin and standalone app, 64-bit) are on the 
 
 The Python engine is the numerical reference. The C++ engine is a port of it and must match it within fixed tolerances (spec test ADA-PARITY).
 
+All phases of the [implementation plan](IMPLEMENTATION_PLAN.md) are done; v0.1.0 is released. Still open: surround (5.1 and up), MP3 parity between the plugin's and the scanner's decoders, and macOS builds (see [Status and open items](IMPLEMENTATION_PLAN.md#status-and-open-items)).
+
 ## Quick start
 
 Requires Python ≥ 3.11.
@@ -95,6 +97,7 @@ A build without a release can be started by hand under *Actions → Release → 
 ## How it measures
 
 * **K-weighting:** BS.1770 two-stage filter, with coefficients derived for any sample rate.
+* **Channels:** mono and stereo. Stereo channels are weighted and their powers added as BS.1770 prescribes, never folded down to mono; mono counts as one channel, not dual-mono. Surround is not supported yet ([details](USAGE.md#how-channels-are-measured)).
 * **True peak:** the BS.1770 Annex 2 48-tap interpolator. It oversamples 4× at ≤ 48 kHz and 2× at ≤ 96 kHz.
 * **PSR alignment:** the peak and the loudness in PSR cover exactly the same 3-second window. Both are computed on a 100 ms grid, and the true-peak filter's delay is compensated.
 * **Gating:** BS.1770 gating for integrated loudness and EBU Tech 3342 gating for LRA. Silence and intros are excluded from the PSR statistics.
@@ -109,7 +112,7 @@ The full definitions, tolerances and test matrix are in [PROJECT_SPECIFICATION.m
 python/ada_core/    engine, K-weighting, true peak, scanner, visualizer
 python/tests/       compliance and unit tests (pytest)
 python/tools/       EBU test-set installer, C++ table generator
-src/, tests/cpp/    C++ engine, JUCE plugin and tests (Stage 2, in progress)
+src/, tests/cpp/    C++ engine, JUCE plugin and tests (Stage 2)
 ```
 
 ## Standards

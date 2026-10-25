@@ -108,3 +108,16 @@ Test IDs (T3341-*, T3342-*, ADA-*) refer to §2 of `PROJECT_SPECIFICATION.md`. E
   - `ada::evaluateTarget` (pure, tested in `tests/cpp/test_engine.cpp`): streaming deviations are warnings ("turned down by X dB"), broadcast deviations problems; peaks above the ceiling warning (streaming) or problem (broadcast, or above 0 dBTP).
   - Compact target box in the corner under the PSR meter (selector, icon + short line per verdict, full sentences in the tooltip) in all three views; the zone bar spans the graph's width; dashed target and ceiling lines in the history graph.
   - Check current platform documentation before a release.
+
+---
+
+## Status and open items
+As of 2026-10-25 all phases above are done. v0.1.0 was released from `ad56ed8` (Windows x64 zip: VST3 + standalone app, built and tested by `.github/workflows/release.yml`).
+
+Channel handling (spec §1 scope, BS.1770): mono and stereo only, in the Python engine, the plugin bus layouts (`isBusesLayoutSupported`) and file analysis. Stereo is K-weighted per channel and the powers are summed with $G_i = 1.0$ (`DynamicsEngine::processFrame`), never folded down to mono; true peak is the maximum over channels. Mono is $N = 1$, not dual-mono (ADA-MONO). The Windows output source (4.6) takes only the front L/R of surround devices.
+
+Open:
+- [ ] **Surround (5.1, 7.1).** BS.1770 weights: 1.0 for L, R, C; 1.41 for the surround channels; LFE excluded. Needs a channel-layout mapping per source (file channel masks, host bus layouts, WASAPI speaker masks), a spec §1/§2 change (scope and new compliance tests, e.g. the multichannel cases of the EBU loudness test set) and the same change in Python and C++ (ADA-PARITY).
+- [ ] **MP3 parity** of JUCE's decoder against the Python decoder (see 3.6).
+- [ ] **macOS builds**, including M4A through JUCE's Core Audio reader (see 3.6); a CI job would be the first check.
+- [ ] **Delivery targets:** check the platform values against current documentation before the next release (see 4.5).

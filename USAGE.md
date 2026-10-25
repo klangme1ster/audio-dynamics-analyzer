@@ -21,6 +21,14 @@ This installs two commands, `ada-scan` and `ada-plot`, and the Python package `a
 
 Other channel counts or sample rates are reported as errors and skipped.
 
+### How channels are measured
+
+The same in `ada-scan`, the plugin and the standalone app:
+* **Stereo is not folded down to mono.** As BS.1770 prescribes, left and right are K-weighted separately, and their *powers* are added (weight 1.0 each). A sum to mono, (L+R)/2, would read out-of-phase content such as wide reverbs or stereo synths too quiet.
+* **True peak** is oversampled per channel; the higher of the two counts. PSR and PLR use these two values, so they are stereo-correct as well.
+* **Mono** files count as one channel with weight 1.0. They are not duplicated to dual-mono (that would read 3 dB louder): a −23 dBFS mono sine reads −26 LUFS, the same sine on both channels of a stereo file −23 LUFS.
+* **Surround (5.1, 7.1, ...) is not supported yet.** It would need the BS.1770 channel weights (1.41 for the surround channels, LFE excluded). Surround files are rejected; the standalone app's *Output* view measures surround devices on their front left and right channels only.
+
 ---
 
 ## `ada-scan`: batch scanner
@@ -200,7 +208,7 @@ Compare a mix with good references in the same genre rather than chasing a singl
 * It measures the input *without* playing it: the output stays silent unless you turn on **Play input to output**, which is off at every start. That avoids feedback, so JUCE's feedback protection (input mute) is switched off; leave "Mute audio input" in the *Options* audio settings unticked, or the analysis receives silence. With speakers instead of headphones, turning playback on can cause feedback.
 * **Output view: measuring what Windows plays.** Pick an output device in the list (*Default output* follows the Windows setting) and ADA measures everything that device plays, for example Spotify, a browser or a media player. It starts measuring the default output the first time you open the view; **Output analysis** turns it off and on, and **Reset** starts a new measurement. Pauses in playback are measured as silence, so the time axis keeps running.
   * This uses Windows' loopback capture, which sees the audio after the Windows mixer, including per-application volume. Programs that play through ASIO (e.g. Cubase) bypass the Windows mixer and cannot be measured this way: use the plugin on Cubase's master bus, or your interface's loopback input in the **Live** view.
-  * Surround devices are measured on their front left and right channels. The device must run at a sample rate that is a multiple of 100 Hz (44.1, 48, 96 kHz, ...).
+  * Surround devices are measured on their front left and right channels only (no surround loudness, see [How channels are measured](#how-channels-are-measured)). The device must run at a sample rate that is a multiple of 100 Hz (44.1, 48, 96 kHz, ...).
   * Start the app directly in this view with `"Audio Dynamics Analyzer.exe" --output`.
 * To measure what another program plays through ASIO, choose your audio interface's loopback channel (or a virtual audio cable) as the input under *Options* and use the **Live** view.
 * The window remembers its position between sessions. The title bar shows what you are looking at, e.g. "Audio Dynamics Analyzer – song.flac (3:45)", "– output: Default output (Speakers)" or "– live input".
