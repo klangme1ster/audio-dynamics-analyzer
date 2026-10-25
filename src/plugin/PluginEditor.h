@@ -58,7 +58,10 @@ private:
     void refreshDevices();
     void startOutputCapture();
     const ada::HistoryStore& liveLikeStore();
-    void analyseFile (const juce::File& file);
+    void analyseFile (const juce::File& file, const std::optional<ada::ChannelLayout>& layout = std::nullopt);
+    void updateLayoutBox();
+    void chooseLayout (const std::optional<ada::ChannelLayout>& layout);
+    void editCustomLayout (int channels);
     void openFileChooser();
     void updateWindowTitle();
     void applyTarget();
@@ -73,6 +76,10 @@ private:
     juce::ComboBox deviceBox;                                  // output view: Windows output device
     juce::ToggleButton outputToggle { "Output analysis" };    // output view: capture on/off
     juce::Label sourceLabel;
+    juce::ComboBox layoutBox;                                  // channel layout of 3+ channel input or files
+    std::vector<ada::ChannelLayout> layoutItems;               // presets offered by layoutBox (id 10 + index)
+    juce::String shownLayoutKey;
+    std::unique_ptr<juce::AlertWindow> layoutDialog;
     juce::TextButton openButton { "Open file..." };
     juce::ToggleButton liveAnalysisToggle { "Live analysis" };
     juce::AudioProcessorValueTreeState::ButtonAttachment liveAnalysisAttachment;

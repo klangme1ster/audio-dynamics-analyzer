@@ -5,6 +5,7 @@
 
 #include "FileAnalysis.h"
 #include "MediaFoundationFormat.h"
+#include "PluginLayout.h"
 #include "Summary.h"
 #include "TestSupport.h"
 
@@ -474,4 +475,37 @@ TEST_CASE ("Four and seven channel files stay rejected without a suggestion")
         CHECK_FALSE (fa.suggestedLayout().has_value());
         file.deleteFile();
     }
+}
+
+// --- Host bus layouts (plugin) ------------------------------------------------------------------------
+
+TEST_CASE ("Host channel sets map to layouts: standard speaker sets only")
+{
+    using S = juce::AudioChannelSet;
+    CHECK (*ada::layoutFromChannelSet (S::mono()) == ada::ChannelLayout::mono());
+    CHECK (*ada::layoutFromChannelSet (S::stereo()) == ada::ChannelLayout::stereo());
+    CHECK (*ada::layoutFromChannelSet (S::create5point0()) == ada::ChannelLayout::surround50());
+    CHECK (*ada::layoutFromChannelSet (S::create5point1()) == ada::ChannelLayout::surround51());
+    S sideFive; // 5.1 with side instead of back surrounds ("Music"): still Ls / Rs
+    for (auto t : { S::left, S::right, S::centre, S::LFE, S::leftSurroundSide, S::rightSurroundSide })
+        sideFive.addChannel (t);
+    CHECK (*ada::layoutFromChannelSet (sideFive) == ada::ChannelLayout::surround51());
+
+    // 7.1: the buffer order is JUCE's (by channel type), the roles follow it
+    const auto seven = ada::layoutFromChannelSet (S::create7point1());
+    REQUIRE (seven.has_value());
+    CHECK (seven->count == 8);
+    CHECK (seven->measuredCount() == 7);
+    CHECK (ada::displayName (*seven) == "7.1");
+    const auto sevenLayout = S::create7point1();
+    for (int ch = 0; ch < 8; ++ch)
+    {
+        const auto type = sevenLayout.getTypeOfChannel (ch);
+        const bool rear = type == S::leftSurroundRear || type == S::rightSurroundRear;
+        CHECK ((seven->roles[(size_t) ch] == ada::Role::Lb || seven->roles[(size_t) ch] == ada::Role::Rb) == rear);
+    }
+
+    for (const auto& set : { S::createLCR(), S::quadraphonic(), S::discreteChannels (6), S::create7point1SDDS(),
+                             S::create7point1point4(), S::disabled() })
+        CHECK_FALSE (ada::layoutFromChannelSet (set).has_value());
 }

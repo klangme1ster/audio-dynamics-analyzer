@@ -42,7 +42,7 @@ public:
     const juce::File& file() const noexcept { return currentFile; }
     double durationSeconds() const noexcept { return duration; }
     double sampleRate() const noexcept { return rate; }
-    int channels() const noexcept { return numChannels; }
+    int channels() const noexcept { return numChannels; } // of the last file opened, also if it was refused
     const ChannelLayout& layout() const noexcept { return fileLayout; } // of the last successful start()
     // After a failed start(): the file has 3+ channels and no layout information. suggestedLayout()
     // is the educated guess for the channel count (never applied without the user's confirmation).

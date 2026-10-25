@@ -177,6 +177,7 @@ bool FileAnalysis::start (const juce::File& f, const std::optional<ChannelLayout
     if (reader == nullptr)
         return fail ("Cannot open " + f.getFileName() + " as audio.");
     const auto channelCount = (int) reader->numChannels;
+    numChannels = channelCount;
     if (channelCount < 1 || channelCount > DynamicsEngine::maxChannels)
         return fail (f.getFileName() + " has " + juce::String (channelCount)
                      + " channels; ADA analyses mono, stereo, 5.0, 5.1 and 7.1 files.");
@@ -197,7 +198,6 @@ bool FileAnalysis::start (const juce::File& f, const std::optional<ChannelLayout
                      + " Hz is not supported (needs a multiple of 100 Hz).");
 
     rate = reader->sampleRate;
-    numChannels = channelCount;
     fileLayout = *layout;
     duration = (double) reader->lengthInSamples / rate;
     // lengthInSamples is an estimate for some compressed formats, hence the margin

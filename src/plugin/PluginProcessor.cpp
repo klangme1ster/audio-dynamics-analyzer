@@ -35,33 +35,81 @@ juce::AudioProcessorValueTreeState::ParameterLayout AdaAudioProcessor::createPar
 void AdaAudioProcessor::prepareToPlay (double sampleRate, int)
 {
     setLatencySamples (0); // pass-through: metering latency does not delay the audio
-    const int channels = juce::jlimit (1, ada::DynamicsEngine::maxPlainChannels, getTotalNumInputChannels());
+    configureEngine (sampleRate);
+}
+
+void AdaAudioProcessor::configureEngine (double sampleRate)
+{
+    const int channels = getTotalNumInputChannels();
     const bool supported = ada::DynamicsEngine::supportsSampleRate (sampleRate);
+    std::optional<ada::ChannelLayout> layout;
+    {
+        const juce::ScopedLock lock (layoutLock);
+        hostBusLayout = ada::layoutFromChannelSet (getChannelLayoutOfBus (true, 0));
+        layout = layoutChoice && layoutChoice->count == channels ? layoutChoice : hostBusLayout;
+        measuredLayout = layout;
+    }
+    inputChannels = channels;
 
     // Hosts may deactivate and reactivate plugins around transport changes (e.g. Cubase suspending
     // processing). With unchanged settings the running measurement simply continues.
-    if (supported && active.load() && sampleRate == preparedRate && channels == preparedChannels)
+    if (supported && layout && active.load() && sampleRate == preparedRate && *layout == preparedLayout)
         return;
 
     const bool hadMeasurement = preparedRate > 0.0;
-    if (supported)
+    if (supported && layout)
     {
-        engine.prepare (sampleRate, channels);
+        engine.prepare (sampleRate, *layout);
         preparedRate = sampleRate;
-        preparedChannels = channels;
+        preparedLayout = *layout;
         if (hadMeasurement)
             noteRestart (RestartReason::settingsChanged, -1, -1);
     }
-    active = supported;
+    active = supported && layout.has_value();
     transport.reset();
+}
+
+std::optional<ada::ChannelLayout> AdaAudioProcessor::liveLayout() const
+{
+    const juce::ScopedLock lock (layoutLock);
+    return measuredLayout;
+}
+
+std::optional<ada::ChannelLayout> AdaAudioProcessor::hostLayout() const
+{
+    const juce::ScopedLock lock (layoutLock);
+    return hostBusLayout;
+}
+
+bool AdaAudioProcessor::hasLayoutChoice() const
+{
+    const juce::ScopedLock lock (layoutLock);
+    return layoutChoice.has_value();
+}
+
+void AdaAudioProcessor::setLayoutChoice (const std::optional<ada::ChannelLayout>& layout)
+{
+    {
+        const juce::ScopedLock lock (layoutLock);
+        layoutChoice = layout;
+    }
+    if (preparedRate > 0.0)
+    {
+        // the engine is re-prepared while the host is not running the audio callback
+        suspendProcessing (true);
+        configureEngine (getSampleRate());
+        suspendProcessing (false);
+    }
+    ++layoutChanges;
 }
 
 void AdaAudioProcessor::releaseResources() {}
 
 bool AdaAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
+    // mono, stereo, 5.0, 5.1 and 7.1 (spec 3.11); the output mirrors the input
     const auto in = layouts.getMainInputChannelSet();
-    if (in != juce::AudioChannelSet::mono() && in != juce::AudioChannelSet::stereo())
+    if (! ada::layoutFromChannelSet (in))
         return false;
     return layouts.getMainOutputChannelSet() == in;
 }
@@ -94,7 +142,9 @@ void AdaAudioProcessor::analyseBlock (const juce::AudioBuffer<float>& buffer) no
         return; // display keeps the last values
 
     // After a resume slightly before the pause point, audio that was already measured is skipped
-    std::array<const float*, ada::DynamicsEngine::maxPlainChannels> channels {};
+    if (buffer.getNumChannels() < engine.channels())
+        return;
+    std::array<const float*, ada::DynamicsEngine::maxChannels> channels {};
     for (int ch = 0; ch < engine.channels(); ++ch)
         channels[(size_t) ch] = buffer.getReadPointer (ch, skip);
     engine.setClipThreshold (clipThreshold->load (std::memory_order_relaxed));
@@ -219,6 +269,10 @@ void AdaAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
                                                      : juce::String(), nullptr);
     state.setProperty ("customLoudness", customLoudness.load(), nullptr);
     state.setProperty ("customCeiling", customCeiling.load(), nullptr);
+    {
+        const juce::ScopedLock lock (layoutLock);
+        state.setProperty ("layoutChoice", layoutChoice ? juce::String (layoutChoice->roleList()) : juce::String(), nullptr);
+    }
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -238,6 +292,8 @@ void AdaAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
             setCustomTarget ((float) xml->getDoubleAttribute ("customLoudness", -14.0),
                              (float) xml->getDoubleAttribute ("customCeiling", -1.0));
             setTargetIndex (target);
+            // role list in channel order; anything unreadable follows the host
+            setLayoutChoice (ada::ChannelLayout::parse (xml->getStringAttribute ("layoutChoice").toStdString()));
             parameters.replaceState (juce::ValueTree::fromXml (*xml));
         }
 }

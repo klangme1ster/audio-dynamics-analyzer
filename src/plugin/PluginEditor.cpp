@@ -183,6 +183,19 @@ AdaAudioProcessorEditor::AdaAudioProcessorEditor (AdaAudioProcessor& p)
     sourceLabel.setColour (juce::Label::textColourId, theme::textSecondary);
     sourceLabel.setMinimumHorizontalScale (0.85f);
     addAndMakeVisible (sourceLabel);
+    layoutBox.setTooltip ("Which speaker each channel is (spec 3.11): the surround channels weigh +1.5 dB and the LFE is not\n"
+                          "measured. The host's bus layout is used when it names the speakers; choose one here if it does not,\n"
+                          "or if the channels are in another order (Custom...). A suggestion is only a guess until you pick it.");
+    layoutBox.onChange = [this] {
+        const int id = layoutBox.getSelectedId();
+        if (id == 1)
+            chooseLayout (std::nullopt);
+        else if (id == 2)
+            editCustomLayout (fileModeShown ? processor.fileAnalysis().channels() : processor.liveChannels());
+        else if (id >= 10 && id - 10 < (int) layoutItems.size())
+            chooseLayout (layoutItems[(size_t) (id - 10)]);
+    };
+    addChildComponent (layoutBox);
     openButton.setTooltip ("Analyse an audio file (WAV, AIFF, FLAC, Ogg, MP3, WMA) at full speed.\n"
                            "You can also drop a file anywhere on this window.");
     openButton.onClick = [this] { openFileChooser(); };
@@ -428,14 +441,134 @@ void AdaAudioProcessorEditor::showView (AdaAudioProcessor::View view)
         updateFromHistory();
         updateRestartStatus();
     }
+    shownLayoutKey = {};
+    updateLayoutBox();
     resized();
     repaint();
 }
 
-void AdaAudioProcessorEditor::analyseFile (const juce::File& file)
+void AdaAudioProcessorEditor::analyseFile (const juce::File& file, const std::optional<ada::ChannelLayout>& layout)
 {
-    processor.fileAnalysis().start (file); // a failure is shown in the source bar
+    processor.fileAnalysis().start (file, layout); // a failure is shown in the source bar
     showView (AdaAudioProcessor::View::file);
+}
+
+// The layout box: for live input with 3+ channels and for files that have them (spec 3.11)
+void AdaAudioProcessorEditor::updateLayoutBox()
+{
+    using State = ada::FileAnalysis::State;
+    const auto& fa = processor.fileAnalysis();
+    int channels = 0;
+    bool needs = false, hasChoice = false;
+    std::optional<ada::ChannelLayout> current, suggestion, host;
+    if (fileModeShown)
+    {
+        needs = fa.needsLayout();
+        channels = fa.channels();
+        suggestion = fa.suggestedLayout();
+        if (fa.state() == State::running || fa.state() == State::finished)
+            current = fa.layout();
+        else if (! needs)
+            channels = 0; // another failure: nothing to choose
+    }
+    else if (! outputModeShown)
+    {
+        channels = processor.liveChannels();
+        current = processor.liveLayout();
+        host = processor.hostLayout();
+        hasChoice = processor.hasLayoutChoice();
+    }
+    const bool show = channels > 2;
+    const juce::String key = juce::String (show ? 1 : 0) + "|" + (fileModeShown ? "f" : "l") + juce::String (channels) + "|"
+                             + (current ? current->roleList() : "-") + "|" + (host ? host->roleList() : "-") + "|"
+                             + juce::String (needs ? 1 : 0) + juce::String (hasChoice ? 1 : 0);
+    if (key == shownLayoutKey)
+        return;
+    shownLayoutKey = key;
+    if (! fileModeShown)
+        updateFromHistory(); // the source line names the layout
+
+    layoutBox.clear (juce::dontSendNotification);
+    layoutItems.clear();
+    if (layoutBox.isVisible() != show)
+    {
+        layoutBox.setVisible (show);
+        resized();
+    }
+    if (! show)
+        return;
+
+    int selected = 0;
+    if (host)
+        layoutBox.addItem ("Auto: " + juce::String (ada::displayName (*host)) + " (host)", 1);
+    for (const auto& preset : { ada::ChannelLayout::surround50(), ada::ChannelLayout::surround51(), ada::ChannelLayout::surround71() })
+        if (preset.count == channels)
+        {
+            layoutItems.push_back (preset);
+            const int id = 10 + (int) layoutItems.size() - 1;
+            const bool isSuggestion = needs && suggestion && *suggestion == preset;
+            layoutBox.addItem (juce::String (preset.name()) + (isSuggestion ? " (suggested)" : ""), id);
+            if (current && *current == preset && (fileModeShown || hasChoice || ! host))
+                selected = id;
+        }
+    layoutBox.addItem ("Custom...", 2);
+    if (selected == 0 && current)
+    {
+        if (! fileModeShown && ! hasChoice && host)
+            selected = 1;
+        else
+        {
+            layoutBox.addItem (juce::String (current->roleList()), 3);
+            selected = 3; // an earlier custom choice
+        }
+    }
+    if (selected != 0)
+        layoutBox.setSelectedId (selected, juce::dontSendNotification);
+    else
+        layoutBox.setTextWhenNothingSelected (juce::String (channels) + " channels: choose a layout");
+}
+
+void AdaAudioProcessorEditor::chooseLayout (const std::optional<ada::ChannelLayout>& layout)
+{
+    if (fileModeShown)
+        analyseFile (processor.fileAnalysis().file(), layout);
+    else
+        processor.setLayoutChoice (layout);
+    shownLayoutKey = {};
+    updateLayoutBox();
+}
+
+void AdaAudioProcessorEditor::editCustomLayout (int channels)
+{
+    layoutDialog = std::make_unique<juce::AlertWindow> (
+        "Custom channel layout",
+        "The speaker of each of the " + juce::String (channels) + " channels, in channel order, separated by commas.\n"
+        "Speakers: L R C LFE Ls Rs Lb Rb (each at most once). Example for 5.1: L,R,C,LFE,Ls,Rs",
+        juce::MessageBoxIconType::NoIcon, this);
+    auto* window = layoutDialog.get();
+    const auto current = fileModeShown ? std::optional<ada::ChannelLayout> (processor.fileAnalysis().layout()) : processor.liveLayout();
+    window->addTextEditor ("roles", current && current->count == channels ? juce::String (current->roleList()) : juce::String(),
+                           "Roles");
+    window->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    window->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    window->enterModalState (true, juce::ModalCallbackFunction::create (
+        [safeThis = juce::Component::SafePointer<AdaAudioProcessorEditor> (this), window, channels] (int result) {
+            if (safeThis == nullptr)
+                return;
+            const auto layout = result == 1 ? ada::ChannelLayout::parse (window->getTextEditorContents ("roles").trim().toStdString())
+                                            : std::nullopt;
+            if (layout && layout->count == channels)
+                safeThis->chooseLayout (layout);
+            else
+            {
+                if (result == 1)
+                    juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Custom channel layout",
+                                                            "That is not a valid layout for " + juce::String (channels)
+                                                                + " channels: use each of L, R, C, LFE, Ls, Rs, Lb, Rb at most once.");
+                safeThis->shownLayoutKey = {}; // restore the selector
+                safeThis->updateLayoutBox();
+            }
+        }), false);
 }
 
 void AdaAudioProcessorEditor::openFileChooser()
@@ -513,7 +646,14 @@ void AdaAudioProcessorEditor::updateFromHistory()
     }
     else
     {
-        sourceLabel.setText ("Live input. Drop an audio file here, or open one, to analyse it.", juce::dontSendNotification);
+        juce::String live = "Live input";
+        if (processor.liveChannels() > 2)
+        {
+            const auto layout = processor.liveLayout();
+            live += layout ? " (" + juce::String (ada::displayName (*layout)) + ")"
+                           : ": " + juce::String (processor.liveChannels()) + " channels, choose a layout";
+        }
+        sourceLabel.setText (live + ". Drop an audio file here, or open one, to analyse it.", juce::dontSendNotification);
         sourceLabel.setTooltip ({});
     }
     const auto stats = store.psrStats();
@@ -564,7 +704,7 @@ void AdaAudioProcessorEditor::updateFromFile()
     juce::String info;
     if (fa.state() != State::failed && fa.sampleRate() > 0.0)
         info = theme::timeLabel (fa.durationSeconds()) + ", " + juce::String (fa.sampleRate() / 1000.0, 1) + " kHz "
-               + (fa.channels() == 1 ? "mono" : "stereo");
+               + juce::String (ada::displayName (fa.layout()));
 
     switch (fa.state())
     {
@@ -724,6 +864,7 @@ void AdaAudioProcessorEditor::timerCallback()
         repaint();
     }
     fileModeButton.setEnabled (processor.fileAnalysis().state() != ada::FileAnalysis::State::idle);
+    updateLayoutBox();
     updateWindowTitle();
     if (processor.targetRevision() != shownTargetRevision) // e.g. the host restored a preset
         applyTarget();
@@ -818,9 +959,14 @@ void AdaAudioProcessorEditor::paint (juce::Graphics& g)
         area.removeFromBottom (controlsHeight + gap);
         g.setColour (theme::textSecondary);
         g.setFont (juce::FontOptions (15.0f));
-        g.drawFittedText ("No live metering: unsupported sample rate or channel layout\n"
-                          "(ADA needs mono or stereo at a multiple of 100 Hz).\n"
-                          "You can still analyse audio files: drop one here or use \"Open file...\".",
+        const bool needsLayout = processor.liveChannels() > 2 && ! processor.liveLayout();
+        g.drawFittedText (needsLayout ? juce::String (processor.liveChannels())
+                                            + " input channels without a known speaker layout.\n"
+                                              "Choose the layout at the top right to start measuring.\n"
+                                              "You can still analyse audio files: drop one here or use \"Open file...\"."
+                                      : juce::String ("No live metering: unsupported sample rate or channel layout\n"
+                                                      "(ADA needs mono, stereo, 5.0, 5.1 or 7.1 at a multiple of 100 Hz).\n"
+                                                      "You can still analyse audio files: drop one here or use \"Open file...\"."),
                           area, juce::Justification::centred, 4);
     }
     if (liveStoppedShown || frozenShown)
@@ -885,6 +1031,11 @@ void AdaAudioProcessorEditor::resized()
         deviceBox.setBounds (source.removeFromRight (juce::jmin (300, source.getWidth() / 2)).reduced (0, 2));
     }
     source.removeFromRight (8);
+    if (layoutBox.isVisible())
+    {
+        layoutBox.setBounds (source.removeFromRight (juce::jmin (190, source.getWidth() / 3)).reduced (0, 2));
+        source.removeFromRight (8);
+    }
     sourceLabel.setBounds (source);
     area.removeFromTop (gap);
 
