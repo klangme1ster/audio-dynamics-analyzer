@@ -134,11 +134,11 @@ Spec: §1 scope, §2.1 T3341-6, §2.2 ADA-SURR-W / ADA-LFE / ADA-SURR-TP / ADA-N
 ## Status and open items
 As of 2026-10-25 all phases above are done. v0.1.0 was released from `ad56ed8` (Windows x64 zip: VST3 + standalone app, built and tested by `.github/workflows/release.yml`).
 
-Channel handling (spec §1 scope, §3.11, BS.1770): mono, stereo, 5.0, 5.1 and 7.1 in the Python engine, the plugin bus layouts, file analysis and the Windows output source. Channels are K-weighted per channel and the powers summed with $G_i$ per speaker role (`DynamicsEngine::processFrame`), never folded down; true peak is the maximum over the non-LFE channels. Mono is $N = 1$, not dual-mono (ADA-MONO). Layouts that cannot be determined are rejected until supplied or confirmed.
+Channel handling (spec §1 scope, §3.11, BS.1770): mono, stereo, 5.0, 5.1 and 7.1 in the Python engine, the plugin bus layouts, file analysis and the Windows output source. Channels are K-weighted per channel and the powers summed with $G_i$ per speaker role (`DynamicsEngine::processFrame`), never folded down; true peak is the maximum over all channels, the LFE included. Mono is $N = 1$, not dual-mono (ADA-MONO). Layouts that cannot be determined are rejected until supplied or confirmed.
 
 Open:
 - [x] **Surround (5.0, 5.1, 7.1)** — done on branch `feature/surround`, see Phase 5; open details below. BS.1770 weights: 1.0 for L, R, C; 1.41 for the surround channels; LFE excluded. Needs a channel-layout mapping per source (file channel masks, host bus layouts, WASAPI speaker masks), a spec §1/§2 change (scope and new compliance tests, e.g. the multichannel cases of the EBU loudness test set) and the same change in Python and C++ (ADA-PARITY).
-- [ ] **Surround follow-ups:** test the plugin with a real surround bus in a DAW and a 5.1 output device; FLAC / Ogg channel masks (FLAC's standard orders for 5, 6 and 8 channels are not applied yet); decide whether the LFE should count toward true peak (currently excluded; including it is a one-line change in `DynamicsEngine`).
+- [ ] **Surround follow-ups:** test the plugin with a real surround bus in a DAW and a 5.1 output device; FLAC / Ogg channel masks (FLAC's standard orders for 5, 6 and 8 channels are not applied yet).
 - [ ] **MP3 parity** of JUCE's decoder against the Python decoder (see 3.6).
 - [ ] **macOS builds**, including M4A through JUCE's Core Audio reader (see 3.6); a CI job would be the first check.
 - [ ] **Delivery targets:** check the platform values against current documentation before the next release (see 4.5).

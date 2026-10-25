@@ -183,8 +183,8 @@ AdaAudioProcessorEditor::AdaAudioProcessorEditor (AdaAudioProcessor& p)
     sourceLabel.setColour (juce::Label::textColourId, theme::textSecondary);
     sourceLabel.setMinimumHorizontalScale (0.85f);
     addAndMakeVisible (sourceLabel);
-    layoutBox.setTooltip ("Which speaker each channel is (spec 3.11): the surround channels weigh +1.5 dB and the LFE is not\n"
-                          "measured. The host's bus layout is used when it names the speakers; choose one here if it does not,\n"
+    layoutBox.setTooltip ("Which speaker each channel is (spec 3.11): the surround channels weigh +1.5 dB and the LFE\n"
+                          "counts for the true peak only. The host's bus layout is used when it names the speakers; choose one here if it does not,\n"
                           "or if the channels are in another order (Custom...). A suggestion is only a guess until you pick it.");
     layoutBox.onChange = [this] {
         const int id = layoutBox.getSelectedId();

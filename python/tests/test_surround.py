@@ -78,7 +78,10 @@ def test_channel_weights(layout_name):
 
 # --- ADA-LFE --------------------------------------------------------------------
 
-def test_lfe_is_excluded():
+LOUDNESS_ARRAYS = ("momentary", "short_term", "momentary_10ms", "short_term_10ms")
+
+
+def test_lfe_is_excluded_from_loudness_but_not_from_true_peak():
     layout = get_layout("5.1")
     frames = 20 * FS
     bed = signals.pink_noise(FS, frames, -30.0, channels=6)
@@ -86,8 +89,15 @@ def test_lfe_is_excluded():
     loud = bed.copy()
     loud[:, layout.roles.index("LFE")] = signals.sine(FS, 20, 0.0, 50.0, channels=1)[:, 0]
     ref, r = analyze_array(bed, FS, layout=layout), analyze_array(loud, FS, layout=layout)
-    assert_same(r, ref)
-    assert r.true_peak_max == ref.true_peak_max
+    for name in LOUDNESS_ARRAYS:
+        np.testing.assert_allclose(getattr(r, name), getattr(ref, name), rtol=0, atol=1e-9, err_msg=name)
+    ps, rs = r.summary(), ref.summary()
+    for key in ("integrated_lufs", "lra", "max_momentary_lufs", "max_short_term_lufs"):
+        assert ps[key] == rs[key], key
+    # a 0 dBFS sine in the LFE is a 0 dBTP peak: true peak, PSR and PLR see it
+    assert ref.true_peak_max < -10.0
+    assert -0.4 <= r.true_peak_max <= 0.2
+    assert r.plr == pytest.approx(r.true_peak_max - r.integrated)
 
 
 # --- ADA-SURR-TP ----------------------------------------------------------------
@@ -98,10 +108,9 @@ def test_surround_true_peak(role):
     isp = signals.peak_test_sine(FS, 4, math.sqrt(2), 45.0, seconds=20, channels=1, fade_s=0.05)[:, 0]
     x = signals.multichannel(len(isp), layout.roles, {role: isp})
     r = analyze_array(x, FS, layout=layout)
+    assert 3.01 - 0.4 <= r.true_peak_max <= 3.01 + 0.2, (role, r.true_peak_max)  # the LFE counts too
     if role == "LFE":
-        assert r.true_peak_max == -math.inf  # LFE ignored, everything else silent
-    else:
-        assert 3.01 - 0.4 <= r.true_peak_max <= 3.01 + 0.2, (role, r.true_peak_max)
+        assert r.integrated is None  # but it is silent as far as loudness goes
 
 
 # --- ADA-NOFOLD -----------------------------------------------------------------

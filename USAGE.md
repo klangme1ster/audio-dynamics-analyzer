@@ -25,10 +25,10 @@ Other channel counts, multichannel files whose layout is unknown, and other samp
 
 The same in `ada-scan`, the plugin and the standalone app:
 * **Stereo is not folded down to mono.** As BS.1770 prescribes, left and right are K-weighted separately, and their *powers* are added (weight 1.0 each). A sum to mono, (L+R)/2, would read out-of-phase content such as wide reverbs or stereo synths too quiet.
-* **True peak** is oversampled per channel; the highest channel counts (the LFE is not included). PSR and PLR use this value, so they are channel-correct as well.
+* **True peak** is oversampled per channel; the highest channel counts, the LFE included. PSR and PLR use this value, so they are channel-correct as well.
 * **Mono** files count as one channel with weight 1.0. They are not duplicated to dual-mono (that would read 3 dB louder): a −23 dBFS mono sine reads −26 LUFS, the same sine on both channels of a stereo file −23 LUFS.
 * **Surround (5.0, 5.1, 7.1)** uses the BS.1770 channel weights: 1.0 for left, right and centre, 1.41 (+1.5 dB) for the surround and rear channels. Channels are never folded down; their weighted powers are added.
-* **The LFE is not measured**: not for loudness (BS.1770 excludes it) and, as a simplification, not for true peak either. A very loud LFE can therefore clip without ADA showing it.
+* **The LFE is not part of the loudness** (BS.1770 excludes it), but its peaks count for the true peak, so a hot LFE that would clip a converter shows up in true peak, PSR and PLR.
 * **Which channel is which** (the layout) is taken from the source: the channel mask of a WAV file (`WAVE_FORMAT_EXTENSIBLE`), the channel configuration of an M4A / AAC file, the host's bus layout in the plugin, the speaker mask of a Windows output device. ADA never guesses silently:
   * A file with 3 or more channels and no layout information, such as a plain 6-channel WAV, is rejected. The message names the likely layout (5 channels: 5.0, 6: 5.1, 8: 7.1; none for 3, 4 or 7). You supply or confirm it: `ada-scan --layout 5.1 file.wav`, or the layout selector in the plugin and the standalone app, where the suggestion is marked *(suggested)* until you pick it.
   * `--layout` takes `5.0`, `5.1`, `7.1` or the speakers in file channel order, such as `L,R,C,LFE,Ls,Rs` or a permuted order like `Ls,L,Rs,C,LFE,R` (speakers: `L R C LFE Ls Rs Lb Rb`, each at most once). The choice overrides what the file says.

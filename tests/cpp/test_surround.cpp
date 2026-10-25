@@ -96,7 +96,7 @@ TEST_CASE ("ADA-SURR-W: channel weights in 5.1 and 7.1")
         }
 }
 
-TEST_CASE ("ADA-LFE: the LFE changes nothing")
+TEST_CASE ("ADA-LFE: the LFE is out of the loudness, but its peaks count")
 {
     const auto layout = ChannelLayout::surround51();
     const auto bed = toneOn (layout, 0, 20.0, -20.0);
@@ -110,13 +110,15 @@ TEST_CASE ("ADA-LFE: the LFE changes nothing")
     {
         CHECK (a.frames[i].momentaryLUFS == b.frames[i].momentaryLUFS);
         CHECK (a.frames[i].shortTermLUFS == b.frames[i].shortTermLUFS);
-        CHECK (a.frames[i].binPeakDBTP == b.frames[i].binPeakDBTP);
     }
-    CHECK (a.final.truePeakMaxDBTP == b.final.truePeakMaxDBTP);
     CHECK (*a.summary.integrated == *b.summary.integrated);
+    // the 0 dBFS sine in the LFE is a 0 dBTP peak
+    CHECK (a.final.truePeakMaxDBTP < -15.0);
+    CHECK (b.final.truePeakMaxDBTP >= -0.4);
+    CHECK (b.final.truePeakMaxDBTP <= 0.2);
 }
 
-TEST_CASE ("ADA-SURR-TP: true peak over all channels except the LFE")
+TEST_CASE ("ADA-SURR-TP: true peak over all channels, the LFE included")
 {
     const auto layout = ChannelLayout::surround71();
     for (int ch = 0; ch < layout.count; ++ch)
@@ -127,13 +129,8 @@ TEST_CASE ("ADA-SURR-TP: true peak over all channels except the LFE")
             s.channels[(std::size_t) c] = c == ch ? isp.channels[0] : std::vector<float> (isp.channels[0].size(), 0.0f);
         const auto r = analyze (s, layout);
         CAPTURE (ch);
-        if (layout.roles[(std::size_t) ch] == Role::LFE)
-            CHECK (r.final.truePeakMaxDBTP == -std::numeric_limits<double>::infinity());
-        else
-        {
-            CHECK (r.final.truePeakMaxDBTP >= 3.01 - 0.4);
-            CHECK (r.final.truePeakMaxDBTP <= 3.01 + 0.2);
-        }
+        CHECK (r.final.truePeakMaxDBTP >= 3.01 - 0.4);
+        CHECK (r.final.truePeakMaxDBTP <= 3.01 + 0.2);
     }
 }
 

@@ -58,7 +58,7 @@ void DynamicsEngine::prepare (double sampleRate, const ChannelLayout& channelLay
     const auto coeffs = kWeightingCoefficients (fs);
     for (auto& f : kWeighting)
         f.setCoefficients (coeffs);
-    truePeak.prepare (fs, measuredCount);
+    truePeak.prepare (fs, layout_.count);
     delay = truePeak.delay();
 
     integratedHistogram.allocate();
@@ -92,11 +92,11 @@ void DynamicsEngine::process (const float* const* input, int numFrames, MetricsS
     std::array<double, maxChannels> x {};
     for (int i = 0; i < numFrames; ++i)
     {
-        for (int m = 0; m < measuredCount; ++m)
+        for (int ch = 0; ch < layout_.count; ++ch)
         {
             // A single NaN/inf would poison the K-filter state for good (spec 3.4: treated as 0)
-            const double v = (double) input[measuredIndex[(size_t) m]][i];
-            x[(size_t) m] = std::isfinite (v) ? v : 0.0;
+            const double v = (double) input[ch][i];
+            x[(size_t) ch] = std::isfinite (v) ? v : 0.0;
         }
         processFrame (x.data(), sink);
     }
@@ -116,7 +116,7 @@ void DynamicsEngine::processFrame (const double* x, MetricsSink& sink) noexcept
     double energy = 0.0;
     for (int m = 0; m < measuredCount; ++m)
     {
-        const double y = kWeighting[(size_t) m].process (x[m]);
+        const double y = kWeighting[(size_t) m].process (x[measuredIndex[(size_t) m]]);
         energy += measuredWeight[(size_t) m] * y * y; // G_i of the channel role (spec 3.11)
     }
     subAccumulator += energy;

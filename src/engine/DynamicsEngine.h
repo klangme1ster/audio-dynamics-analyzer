@@ -90,8 +90,8 @@ private:
     static constexpr int subBinsPerWindowS = 300, subBinsPerWindowM = 40, peakBins = 30;
 
     double fs = 48000.0;
-    // The LFE (weight 0) is neither filtered nor measured: the engine works on the measured
-    // channels only, weighted by G_i (spec 3.11). All fixed-size; set in prepare().
+    // The loudness is measured on the channels with weight > 0, weighted by G_i; the LFE (weight 0)
+    // is not K-weighted but its peaks count for the true peak (spec 3.11). All fixed-size; set in prepare().
     ChannelLayout layout_ = ChannelLayout::stereo();
     int measuredCount = 2;
     std::array<int, maxChannels> measuredIndex {};

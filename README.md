@@ -97,7 +97,7 @@ A build without a release can be started by hand under *Actions → Release → 
 ## How it measures
 
 * **K-weighting:** BS.1770 two-stage filter, with coefficients derived for any sample rate.
-* **Channels:** mono, stereo, 5.0, 5.1 and 7.1. Channels are weighted as BS.1770 prescribes (surround channels +1.5 dB, LFE not measured) and their powers added, never folded down; mono counts as one channel, not dual-mono. A multichannel file without layout information is rejected until you supply or confirm the layout ([details](USAGE.md#how-channels-are-measured)).
+* **Channels:** mono, stereo, 5.0, 5.1 and 7.1. Channels are weighted as BS.1770 prescribes (surround channels +1.5 dB, LFE left out of the loudness but not the true peak) and their powers added, never folded down; mono counts as one channel, not dual-mono. A multichannel file without layout information is rejected until you supply or confirm the layout ([details](USAGE.md#how-channels-are-measured)).
 * **True peak:** the BS.1770 Annex 2 48-tap interpolator. It oversamples 4× at ≤ 48 kHz and 2× at ≤ 96 kHz.
 * **PSR alignment:** the peak and the loudness in PSR cover exactly the same 3-second window. Both are computed on a 100 ms grid, and the true-peak filter's delay is compensated.
 * **Gating:** BS.1770 gating for integrated loudness and EBU Tech 3342 gating for LRA. Silence and intros are excluded from the PSR statistics.

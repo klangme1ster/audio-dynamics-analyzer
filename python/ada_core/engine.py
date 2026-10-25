@@ -115,7 +115,8 @@ class Analyzer:
         self.layout = resolve_layout(channels, override=layout)
         self.fs = sample_rate
         self.channels = channels
-        # the LFE (weight 0) is neither filtered nor measured; the rest is weighted by G_i
+        # the LFE (weight 0) is not part of the loudness: not K-weighted, not summed; the rest is
+        # weighted by G_i. Its peaks still count for the true peak (every channel is oversampled).
         self._measured = self.layout.measured
         self._weights = self.layout.weights[self._measured]
         self._all_measured = len(self._measured) == channels
@@ -123,7 +124,7 @@ class Analyzer:
         self.bin_size = sample_rate // 10
         self.sub_size = sample_rate // 100
         self.kweight = KWeighting(sample_rate, measured)
-        self.true_peak = TruePeakDetector(sample_rate, measured)
+        self.true_peak = TruePeakDetector(sample_rate, channels)
         self.frames = 0
         self._sub_energy: list[np.ndarray] = []   # (sub-bins, channels) per chunk
         self._partial = np.zeros(measured)        # energy of the open sub-bin
@@ -142,9 +143,9 @@ class Analyzer:
         if n == 0:
             return
         self.frames += n
+        self._peaks.append(self.true_peak.process(x))
         if not self._all_measured:
             x = x[:, self._measured]
-        self._peaks.append(self.true_peak.process(x))
 
         sq = self.kweight.process(x) ** 2
         need = self.sub_size - self._partial_len
