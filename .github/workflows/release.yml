@@ -92,7 +92,7 @@ jobs:
           Copy-Item $exe $out
           Copy-Item packaging/INSTALL.txt, LICENSE $out
           # the binaries are AGPLv3 (open-source JUCE): ship the license text and JUCE's terms
-          Invoke-WebRequest https://www.gnu.org/licenses/agpl-3.0.txt -OutFile "$out/LICENSE-AGPL-3.0.txt" -TimeoutSec 60 -MaximumRetryCount 5 -RetryIntervalSec 15  # gnu.org sometimes times out
+          Copy-Item packaging/LICENSE-AGPL-3.0.txt $out  # gnu.org text, kept in the repo: the runner cannot always reach gnu.org
           Copy-Item build/_deps/juce-src/LICENSE.md "$out/LICENSE-JUCE.md"
           Compress-Archive -Path $out -DestinationPath "dist/$name.zip"
           "zip=dist/$name.zip" >> $env:GITHUB_OUTPUT
